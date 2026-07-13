@@ -46,6 +46,8 @@ export default function Home() {
   const [zoom, setZoom] = useState(100);
   const [prompt, setPrompt] = useState("");
   const [toast, setToast] = useState("");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [history, setHistory] = useState<NodeItem[][]>([]);
   const drag = useRef<{ id: number; ox: number; oy: number } | null>(null);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
@@ -111,6 +113,117 @@ export default function Home() {
     setPrompt("");
   }
 
+  function safeFilename(name: string) {
+    return name.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "-").slice(0, 48) || "心智圖";
+  }
+
+  function downloadFile(parts: BlobPart[], type: string, extension: string) {
+    const blob = new Blob(parts, { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeFilename(nodes.find((node) => node.parent === null)?.text ?? "心智圖")}.${extension}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportMarkdown() {
+    const roots = nodes.filter((node) => node.parent === null);
+    const lines = ["# 靈感樹心智圖", "", `> 匯出時間：${new Date().toLocaleString("zh-TW")}`, ""];
+    function appendNode(node: NodeItem, depth: number) {
+      lines.push(`${"#".repeat(Math.min(depth + 1, 6))} ${node.text.replace(/\n/g, " ")}`, "");
+      if (node.note.trim()) lines.push(node.note.trim(), "");
+      nodes.filter((item) => item.parent === node.id).forEach((child) => appendNode(child, depth + 1));
+    }
+    roots.forEach((root) => appendNode(root, 1));
+    downloadFile(["\uFEFF", lines.join("\n")], "text/markdown;charset=utf-8", "md");
+    setExportOpen(false);
+    setToast("Markdown 已下載");
+    window.setTimeout(() => setToast(""), 1800);
+  }
+
+  function makePdfFromJpeg(jpeg: Uint8Array, imageWidth: number, imageHeight: number) {
+    const encoder = new TextEncoder();
+    const chunks: Uint8Array[] = [];
+    const offsets = [0];
+    let length = 0;
+    const push = (value: string | Uint8Array) => { const bytes = typeof value === "string" ? encoder.encode(value) : value; chunks.push(bytes); length += bytes.length; };
+    push(new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52, 10, 37, 226, 227, 207, 211, 10]));
+    const object = (id: number, body: string | Uint8Array[]) => {
+      offsets[id] = length;
+      push(`${id} 0 obj\n`);
+      if (typeof body === "string") push(body); else body.forEach(push);
+      push("\nendobj\n");
+    };
+    object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    object(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+    object(4, [`<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`, jpeg, "\nendstream"] .map((part) => typeof part === "string" ? encoder.encode(part) : part));
+    const content = "q\n842 0 0 595 0 0 cm\n/Im0 Do\nQ\n";
+    object(5, `<< /Length ${encoder.encode(content).length} >>\nstream\n${content}endstream`);
+    const xref = length;
+    push("xref\n0 6\n0000000000 65535 f \n");
+    for (let id = 1; id <= 5; id++) push(`${String(offsets[id]).padStart(10, "0")} 00000 n \n`);
+    push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+    return chunks;
+  }
+
+  async function exportPdf() {
+    setExporting(true);
+    setExportOpen(false);
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    try {
+      const width = 1684, height = 1190;
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas unavailable");
+      ctx.fillStyle = "#f7f3ea"; ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = "#211f1a"; ctx.fillRect(0, 0, width, 110);
+      ctx.fillStyle = "#fffcf6"; ctx.font = "600 36px sans-serif"; ctx.fillText("靈感樹 · 心智圖", 58, 68);
+      ctx.fillStyle = "#cfc9bd"; ctx.font = "20px sans-serif"; ctx.fillText(new Date().toLocaleDateString("zh-TW"), 1450, 66);
+      const minX = Math.min(...nodes.map((node) => node.x));
+      const maxX = Math.max(...nodes.map((node) => node.x + (node.tone === "ink" ? 204 : 180)));
+      const minY = Math.min(...nodes.map((node) => node.y));
+      const maxY = Math.max(...nodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
+      const scale = Math.min(1500 / Math.max(maxX - minX, 1), 960 / Math.max(maxY - minY, 1), 1.65);
+      const ox = (width - (maxX - minX) * scale) / 2 - minX * scale;
+      const oy = 150 + (960 - (maxY - minY) * scale) / 2 - minY * scale;
+      ctx.lineWidth = 4; ctx.lineCap = "round";
+      nodes.forEach((node) => {
+        const parent = nodes.find((item) => item.id === node.parent);
+        if (!parent) return;
+        const color = node.tone === "sage" ? "#7f9876" : node.tone === "sun" ? "#d8ad44" : "#ed765f";
+        ctx.strokeStyle = color; ctx.globalAlpha = .72; ctx.beginPath();
+        ctx.moveTo(ox + (parent.x + 90) * scale, oy + (parent.y + 35) * scale);
+        ctx.lineTo(ox + (node.x + 90) * scale, oy + (node.y + 35) * scale); ctx.stroke(); ctx.globalAlpha = 1;
+      });
+      nodes.forEach((node) => {
+        const x = ox + node.x * scale, y = oy + node.y * scale;
+        const w = (node.tone === "ink" ? 204 : 180) * scale, h = (node.tone === "ink" ? 82 : 70) * scale;
+        ctx.fillStyle = node.tone === "ink" ? "#211f1a" : "#fffcf6";
+        ctx.strokeStyle = node.tone === "sage" ? "#7f9876" : node.tone === "sun" ? "#d8ad44" : node.tone === "ink" ? "#211f1a" : "#ed765f";
+        ctx.lineWidth = Math.max(3, 5 * scale); ctx.beginPath(); ctx.roundRect(x, y, w, h, 14 * scale); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = node.tone === "ink" ? "#ffffff" : "#211f1a"; ctx.font = `600 ${Math.max(15, 14 * scale)}px sans-serif`;
+        ctx.fillText(node.text.slice(0, 18), x + 15 * scale, y + 29 * scale, w - 26 * scale);
+        ctx.fillStyle = node.tone === "ink" ? "#cfc9bd" : "#746f65"; ctx.font = `${Math.max(11, 9.5 * scale)}px sans-serif`;
+        ctx.fillText(node.note.slice(0, 26), x + 15 * scale, y + 51 * scale, w - 26 * scale);
+      });
+      const data = canvas.toDataURL("image/jpeg", .92).split(",")[1];
+      const binary = atob(data); const jpeg = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) jpeg[i] = binary.charCodeAt(i);
+      downloadFile(makePdfFromJpeg(jpeg, width, height), "application/pdf", "pdf");
+      setToast("PDF 已下載");
+    } catch {
+      setToast("PDF 匯出失敗，請稍後再試");
+    } finally {
+      setExporting(false);
+      window.setTimeout(() => setToast(""), 2200);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -118,6 +231,13 @@ export default function Home() {
         <div className="document-title"><span className="status-dot" />我的理想生活 <span className="saved">互動草稿</span></div>
         <div className="top-actions">
           <button className="icon-button" onClick={undo} disabled={!history.length} aria-label="復原">↶</button>
+          <div className="export-wrap">
+            <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>
+            {exportOpen && <div className="export-menu" role="menu">
+              <button role="menuitem" onClick={exportMarkdown}><span className="file-icon">M↓</span><span><strong>Markdown</strong><small>保留節點階層與說明</small></span></button>
+              <button role="menuitem" onClick={exportPdf}><span className="file-icon pdf">P↓</span><span><strong>PDF 文件</strong><small>輸出完整心智圖畫布</small></span></button>
+            </div>}
+          </div>
           <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); setToast("連結已複製"); }}>分享想法 <span>↗</span></button>
         </div>
       </header>
