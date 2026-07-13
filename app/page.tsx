@@ -22,21 +22,47 @@ const initialNodes: NodeItem[] = [
   { id: 7, parent: 3, text: "每週創作", note: "完成比完美重要", x: 920, y: 25, tone: "sage" },
 ];
 
-const suggestions: Record<string, { title: string; note: string }[]> = {
+const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
-    { title: "設計每週回顧", note: "固定 30 分鐘整理進展與下一步" },
-    { title: "定義成功畫面", note: "寫下三個月後想看見的具體改變" },
-    { title: "建立微小習慣", note: "把第一步縮小到兩分鐘就能開始" },
+    [
+      { title: "設計每週回顧", note: "固定 30 分鐘整理進展與下一步" },
+      { title: "定義成功畫面", note: "寫下三個月後想看見的具體改變" },
+      { title: "建立微小習慣", note: "把第一步縮小到兩分鐘就能開始" },
+    ],
+    [
+      { title: "找出關鍵阻力", note: "列出最可能讓計畫停滯的三件事" },
+      { title: "安排第一步", note: "選一個今天就能完成的最小行動" },
+      { title: "建立支持系統", note: "找出可以提供資源或回饋的人" },
+    ],
+    [
+      { title: "換成反向思考", note: "先問什麼做法一定會讓目標失敗" },
+      { title: "設定檢查點", note: "為一週、一個月與一季設定觀察指標" },
+      { title: "保留實驗空間", note: "選一個低風險方式測試新的可能" },
+    ],
   ],
   身心健康: [
-    { title: "睡眠儀式", note: "睡前一小時降低光線與資訊刺激" },
-    { title: "能量日誌", note: "記錄一週內提升與消耗能量的活動" },
-    { title: "每週運動約會", note: "預先安排兩次喜歡的身體活動" },
+    [
+      { title: "睡眠儀式", note: "睡前一小時降低光線與資訊刺激" },
+      { title: "能量日誌", note: "記錄一週內提升與消耗能量的活動" },
+      { title: "每週運動約會", note: "預先安排兩次喜歡的身體活動" },
+    ],
+    [
+      { title: "數位休息區", note: "設定每天一段完全不看螢幕的時間" },
+      { title: "恢復力清單", note: "整理五個能快速恢復精神的小行動" },
+      { title: "健康環境設計", note: "讓水、好食物與運動用品更容易取得" },
+    ],
   ],
   創意工作: [
-    { title: "靈感收件匣", note: "把碎片想法集中到單一入口" },
-    { title: "無評判草稿", note: "先用 20 分鐘大量產出，再進行篩選" },
-    { title: "跨域刺激", note: "每週從陌生領域帶回一個新觀點" },
+    [
+      { title: "靈感收件匣", note: "把碎片想法集中到單一入口" },
+      { title: "無評判草稿", note: "先用 20 分鐘大量產出，再進行篩選" },
+      { title: "跨域刺激", note: "每週從陌生領域帶回一個新觀點" },
+    ],
+    [
+      { title: "創作時間盒", note: "安排不被會議打斷的 45 分鐘" },
+      { title: "限制式挑戰", note: "刻意加上一個限制，逼出新的做法" },
+      { title: "早期回饋", note: "在完成度 30% 時先找一人交流" },
+    ],
   ],
 };
 
@@ -49,9 +75,11 @@ export default function Home() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [history, setHistory] = useState<NodeItem[][]>([]);
+  const [suggestionRound, setSuggestionRound] = useState(0);
   const drag = useRef<{ id: number; ox: number; oy: number } | null>(null);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
-  const aiSuggestions = suggestions[selected.text] ?? suggestions.default;
+  const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
+  const aiSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
 
   const connections = useMemo(() => nodes.flatMap((node) => {
     const parent = nodes.find((item) => item.id === node.parent);
@@ -278,8 +306,8 @@ export default function Home() {
           <div className="ai-content">
             <p className="eyebrow">目前聚焦</p>
             <div className="focus-card"><span className={`focus-dot ${selected.tone}`} /><div><strong>{selected.text}</strong><p>{selected.note}</p></div></div>
-            <div className="suggestion-heading"><div><span className="spark">✦</span><strong>可以再往哪裡想？</strong></div><button onClick={() => setToast("已換一組靈感")}>換一組 ↻</button></div>
-            <div className="suggestions">
+            <div className="suggestion-heading"><div><span className="spark">✦</span><strong>可以再往哪裡想？</strong></div><button data-testid="rotate-suggestions" onClick={() => { setSuggestionRound((round) => round + 1); setToast("已換一組靈感"); window.setTimeout(() => setToast(""), 1800); }}>換一組 ↻</button></div>
+            <div className="suggestions" data-testid="ai-suggestions" aria-live="polite" key={`${selected.id}-${suggestionRound}`}>
               {aiSuggestions.map((suggestion, index) => <button className="suggestion" key={suggestion.title} onClick={() => addNode(selected.id, suggestion.title, suggestion.note)}><span className="suggestion-number">0{index + 1}</span><div><strong>{suggestion.title}</strong><p>{suggestion.note}</p></div><span className="add-suggestion">＋</span></button>)}
             </div>
             <div className="quick-row"><button onClick={() => setPrompt("把這個想法拆成三個具體步驟")}>拆解步驟</button><button onClick={() => setPrompt("找出我還沒想到的風險與盲點")}>找出盲點</button><button onClick={() => setPrompt("提供一個完全不同的觀點")}>換個角度</button></div>
