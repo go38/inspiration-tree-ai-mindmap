@@ -37,11 +37,11 @@ button { color:inherit; }
 @keyframes menu-in { from{opacity:0;transform:translateY(-5px)} }
 .workspace { height:calc(100vh - 76px); min-height:604px; display:grid; grid-template-columns:72px minmax(500px,1fr) 368px; }
 .toolrail { padding:16px 10px; border-right:1px solid var(--line); background:#fbf8f1; display:flex; flex-direction:column; gap:8px; align-items:center; }
-.tool { width:42px; height:42px; border-radius:11px; font-weight:700; font-size:18px; transition:.18s; }
-.tool:hover { background:#eee8dd; transform:translateY(-1px); }
-.tool.active { background:var(--ink); color:white; box-shadow:0 3px 0 #b9ae9e; }
-.rail-rule { width:28px; height:1px; background:var(--line); margin:4px 0; }
-.rail-help { margin-top:auto; display:grid; gap:6px; }
+.tool { width:48px; height:52px; border-radius:12px; font-weight:700; font-size:20px; transition:.18s; display:grid; place-items:center; align-content:center; gap:1px; }
+.tool small { font-size:8px; font-weight:650; letter-spacing:.06em; }
+.tool:hover:not(:disabled) { background:#eee8dd; transform:translateY(-1px); }
+.tool.danger:hover:not(:disabled) { background:#fae5df; color:#ad4937; }
+.tool:disabled { opacity:.28; cursor:not-allowed; }
 .canvas { position:relative; overflow:hidden; touch-action:none; background-color:var(--paper); background-image:radial-gradient(#bbb3a6 1px, transparent 1px); background-size:24px 24px; }
 .canvas::before { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(circle at 52% 45%,rgba(255,252,246,.85),rgba(247,243,234,.1) 55%); }
 .canvas-hint { position:absolute; z-index:4; top:18px; left:50%; transform:translateX(-50%); border:1px solid var(--line); background:rgba(255,252,246,.88); color:#8b8479; padding:7px 12px; border-radius:20px; font-size:10px; }

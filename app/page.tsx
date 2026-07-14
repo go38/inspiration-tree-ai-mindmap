@@ -149,6 +149,31 @@ export default function Home() {
     window.setTimeout(() => setToast(""), 1800);
   }
 
+  function removeSelectedNode() {
+    const target = nodes.find((node) => node.id === selectedId);
+    if (!target || target.parent === null) {
+      setToast("中心節點不能移除");
+      window.setTimeout(() => setToast(""), 1800);
+      return;
+    }
+    checkpoint();
+    const removedIds = new Set([target.id]);
+    let foundChild = true;
+    while (foundChild) {
+      foundChild = false;
+      nodes.forEach((node) => {
+        if (node.parent !== null && removedIds.has(node.parent) && !removedIds.has(node.id)) {
+          removedIds.add(node.id);
+          foundChild = true;
+        }
+      });
+    }
+    setNodes((items) => items.filter((node) => !removedIds.has(node.id)));
+    setSelectedId(target.parent);
+    setToast(removedIds.size > 1 ? `已移除「${target.text}」及 ${removedIds.size - 1} 個子節點` : `已移除「${target.text}」`);
+    window.setTimeout(() => setToast(""), 2200);
+  }
+
   function editNode(node: NodeItem) {
     const text = window.prompt("編輯節點標題", node.text);
     if (!text?.trim()) return;
@@ -347,13 +372,12 @@ export default function Home() {
 
       <section className="workspace">
         <nav className="toolrail" aria-label="心智圖工具">
-          <button className="tool active" aria-label="選取工具">↖</button>
-          <button className="tool" onClick={() => addNode()} aria-label="新增節點">＋</button>
-          <button className="tool" aria-label="加入連線">⌁</button>
-          <span className="rail-rule" />
-          <button className="tool" aria-label="顏色">◉</button>
-          <button className="tool" aria-label="文字">T</button>
-          <div className="rail-help"><button className="tool" aria-label="鍵盤快捷鍵">⌨</button><button className="tool" aria-label="說明">?</button></div>
+          <button className="tool" onClick={() => addNode()} aria-label="在目前節點下新增節點">
+            <span aria-hidden="true">＋</span><small>新增</small>
+          </button>
+          <button className="tool danger" onClick={removeSelectedNode} aria-label="移除目前節點" disabled={selected.parent === null}>
+            <span aria-hidden="true">−</span><small>移除</small>
+          </button>
         </nav>
 
         <div className="canvas" onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
