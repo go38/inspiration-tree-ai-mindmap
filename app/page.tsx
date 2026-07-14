@@ -12,6 +12,33 @@ type NodeItem = {
   tone: "ink" | "coral" | "sage" | "sun";
 };
 
+function createCurvedRibbon(x1: number, y1: number, x2: number, y2: number, startWidth: number, endWidth: number, seed: number) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const length = Math.max(Math.hypot(dx, dy), 1);
+  const nx = -dy / length, ny = dx / length;
+  const bend = Math.min(46, length * .13) * (seed % 2 === 0 ? 1 : -1);
+  const c1x = x1 + dx * .34 + nx * bend, c1y = y1 + dy * .34 + ny * bend;
+  const c2x = x1 + dx * .68 + nx * bend, c2y = y1 + dy * .68 + ny * bend;
+  const startHalf = startWidth / 2, endHalf = endWidth / 2;
+  const top = {
+    start: [x1 + nx * startHalf, y1 + ny * startHalf],
+    c1: [c1x + nx * startHalf * .72, c1y + ny * startHalf * .72],
+    c2: [c2x + nx * endHalf * 1.35, c2y + ny * endHalf * 1.35],
+    end: [x2 + nx * endHalf, y2 + ny * endHalf],
+  };
+  const bottom = {
+    start: [x1 - nx * startHalf, y1 - ny * startHalf],
+    c1: [c1x - nx * startHalf * .72, c1y - ny * startHalf * .72],
+    c2: [c2x - nx * endHalf * 1.35, c2y - ny * endHalf * 1.35],
+    end: [x2 - nx * endHalf, y2 - ny * endHalf],
+  };
+  const p = (point: number[]) => `${point[0].toFixed(1)} ${point[1].toFixed(1)}`;
+  return {
+    top, bottom,
+    path: `M ${p(top.start)} C ${p(top.c1)}, ${p(top.c2)}, ${p(top.end)} L ${p(bottom.end)} C ${p(bottom.c2)}, ${p(bottom.c1)}, ${p(bottom.start)} Z`,
+  };
+}
+
 const initialNodes: NodeItem[] = [
   { id: 1, parent: null, text: "打造理想生活", note: "從真正重要的事開始", x: 420, y: 300, tone: "ink" },
   { id: 2, parent: 1, text: "身心健康", note: "每天保留恢復能量的空間", x: 130, y: 125, tone: "coral" },
@@ -96,10 +123,9 @@ export default function Home() {
       const parent = node.parent === null ? undefined : byId.get(node.parent);
       if (!parent) return [];
       const x1 = parent.x + 90, y1 = parent.y + 35, x2 = node.x + 90, y2 = node.y + 35;
-      const length = Math.hypot(x2 - x1, y2 - y1);
-      const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
       const thickness = Math.max(4, 10 - (depthOf(node) - 1) * 3);
-      return [{ id: `${parent.id}-${node.id}`, x: x1, y: y1, length, angle, thickness, tone: node.tone }];
+      const curve = createCurvedRibbon(x1, y1, x2, y2, thickness, Math.max(1.2, thickness * .12), parent.id + node.id);
+      return [{ id: `${parent.id}-${node.id}`, path: curve.path, tone: node.tone }];
     });
   }, [nodes]);
 
@@ -241,15 +267,13 @@ export default function Home() {
         }
         const x1 = ox + (parent.x + 90) * scale, y1 = oy + (parent.y + 35) * scale;
         const x2 = ox + (node.x + 90) * scale, y2 = oy + (node.y + 35) * scale;
-        const angle = Math.atan2(y2 - y1, x2 - x1);
-        const normalX = -Math.sin(angle), normalY = Math.cos(angle);
-        const startHalf = Math.max(2, (10 - (depth - 1) * 3) * scale / 2);
-        const endHalf = Math.max(.7, startHalf * .18);
+        const startWidth = Math.max(4, 10 - (depth - 1) * 3) * scale;
+        const curve = createCurvedRibbon(x1, y1, x2, y2, startWidth, Math.max(1.4, startWidth * .12), parent.id + node.id);
         ctx.fillStyle = color; ctx.globalAlpha = .72; ctx.beginPath();
-        ctx.moveTo(x1 + normalX * startHalf, y1 + normalY * startHalf);
-        ctx.lineTo(x2 + normalX * endHalf, y2 + normalY * endHalf);
-        ctx.lineTo(x2 - normalX * endHalf, y2 - normalY * endHalf);
-        ctx.lineTo(x1 - normalX * startHalf, y1 - normalY * startHalf);
+        ctx.moveTo(curve.top.start[0], curve.top.start[1]);
+        ctx.bezierCurveTo(curve.top.c1[0], curve.top.c1[1], curve.top.c2[0], curve.top.c2[1], curve.top.end[0], curve.top.end[1]);
+        ctx.lineTo(curve.bottom.end[0], curve.bottom.end[1]);
+        ctx.bezierCurveTo(curve.bottom.c2[0], curve.bottom.c2[1], curve.bottom.c1[0], curve.bottom.c1[1], curve.bottom.start[0], curve.bottom.start[1]);
         ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
       });
       nodes.forEach((node) => {
@@ -335,7 +359,9 @@ export default function Home() {
         <div className="canvas" onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
           <div className="canvas-hint">拖曳節點整理思緒 · 雙擊編輯內容</div>
           <div className="map-stage" style={{ transform: `scale(${zoom / 100})` }}>
-            {connections.map((line) => <span key={line.id} className={`connection ${line.tone}`} style={{ left: line.x, top: line.y, width: line.length, height: line.thickness, marginTop: -line.thickness / 2, transform: `rotate(${line.angle}deg)` }} />)}
+            <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
+              {connections.map((line) => <path key={line.id} className={`connection ${line.tone}`} d={line.path} />)}
+            </svg>
             {nodes.map((node) => (
               <article
                 key={node.id}
