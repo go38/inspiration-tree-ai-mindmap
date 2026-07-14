@@ -81,14 +81,27 @@ export default function Home() {
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const aiSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
 
-  const connections = useMemo(() => nodes.flatMap((node) => {
-    const parent = nodes.find((item) => item.id === node.parent);
-    if (!parent) return [];
-    const x1 = parent.x + 90, y1 = parent.y + 35, x2 = node.x + 90, y2 = node.y + 35;
-    const length = Math.hypot(x2 - x1, y2 - y1);
-    const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
-    return [{ id: `${parent.id}-${node.id}`, x: x1, y: y1, length, angle, tone: node.tone }];
-  }), [nodes]);
+  const connections = useMemo(() => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const depthOf = (node: NodeItem) => {
+      let depth = 0;
+      let current: NodeItem | undefined = node;
+      while (current?.parent !== null) {
+        depth += 1;
+        current = byId.get(current.parent);
+      }
+      return depth;
+    };
+    return nodes.flatMap((node) => {
+      const parent = node.parent === null ? undefined : byId.get(node.parent);
+      if (!parent) return [];
+      const x1 = parent.x + 90, y1 = parent.y + 35, x2 = node.x + 90, y2 = node.y + 35;
+      const length = Math.hypot(x2 - x1, y2 - y1);
+      const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+      const thickness = Math.max(4, 10 - (depthOf(node) - 1) * 3);
+      return [{ id: `${parent.id}-${node.id}`, x: x1, y: y1, length, angle, thickness, tone: node.tone }];
+    });
+  }, [nodes]);
 
   function checkpoint() { setHistory((items) => [...items.slice(-14), nodes]); }
 
@@ -198,11 +211,8 @@ export default function Home() {
     return chunks;
   }
 
-  async function exportPdf() {
-    setExporting(true);
-    setExportOpen(false);
-    await new Promise((resolve) => window.setTimeout(resolve, 30));
-    try {
+  async function renderMindMapCanvas() {
+      await document.fonts?.ready;
       const width = 1684, height = 1190;
       const canvas = document.createElement("canvas");
       canvas.width = width; canvas.height = height;
@@ -219,14 +229,28 @@ export default function Home() {
       const scale = Math.min(1500 / Math.max(maxX - minX, 1), 960 / Math.max(maxY - minY, 1), 1.65);
       const ox = (width - (maxX - minX) * scale) / 2 - minX * scale;
       const oy = 150 + (960 - (maxY - minY) * scale) / 2 - minY * scale;
-      ctx.lineWidth = 4; ctx.lineCap = "round";
       nodes.forEach((node) => {
         const parent = nodes.find((item) => item.id === node.parent);
         if (!parent) return;
         const color = node.tone === "sage" ? "#7f9876" : node.tone === "sun" ? "#d8ad44" : "#ed765f";
-        ctx.strokeStyle = color; ctx.globalAlpha = .72; ctx.beginPath();
-        ctx.moveTo(ox + (parent.x + 90) * scale, oy + (parent.y + 35) * scale);
-        ctx.lineTo(ox + (node.x + 90) * scale, oy + (node.y + 35) * scale); ctx.stroke(); ctx.globalAlpha = 1;
+        let depth = 1;
+        let ancestor = parent;
+        while (ancestor.parent !== null) {
+          depth += 1;
+          ancestor = nodes.find((item) => item.id === ancestor.parent) ?? ancestor;
+        }
+        const x1 = ox + (parent.x + 90) * scale, y1 = oy + (parent.y + 35) * scale;
+        const x2 = ox + (node.x + 90) * scale, y2 = oy + (node.y + 35) * scale;
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        const normalX = -Math.sin(angle), normalY = Math.cos(angle);
+        const startHalf = Math.max(2, (10 - (depth - 1) * 3) * scale / 2);
+        const endHalf = Math.max(.7, startHalf * .18);
+        ctx.fillStyle = color; ctx.globalAlpha = .72; ctx.beginPath();
+        ctx.moveTo(x1 + normalX * startHalf, y1 + normalY * startHalf);
+        ctx.lineTo(x2 + normalX * endHalf, y2 + normalY * endHalf);
+        ctx.lineTo(x2 - normalX * endHalf, y2 - normalY * endHalf);
+        ctx.lineTo(x1 - normalX * startHalf, y1 - normalY * startHalf);
+        ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
       });
       nodes.forEach((node) => {
         const x = ox + node.x * scale, y = oy + node.y * scale;
@@ -239,13 +263,39 @@ export default function Home() {
         ctx.fillStyle = node.tone === "ink" ? "#cfc9bd" : "#746f65"; ctx.font = `${Math.max(11, 9.5 * scale)}px sans-serif`;
         ctx.fillText(node.note.slice(0, 26), x + 15 * scale, y + 51 * scale, w - 26 * scale);
       });
+      return canvas;
+  }
+
+  async function exportPdf() {
+    setExporting(true);
+    setExportOpen(false);
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    try {
+      const canvas = await renderMindMapCanvas();
       const data = canvas.toDataURL("image/jpeg", .92).split(",")[1];
       const binary = atob(data); const jpeg = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) jpeg[i] = binary.charCodeAt(i);
-      downloadFile(makePdfFromJpeg(jpeg, width, height), "application/pdf", "pdf");
+      downloadFile(makePdfFromJpeg(jpeg, canvas.width, canvas.height), "application/pdf", "pdf");
       setToast("PDF 已下載");
     } catch {
       setToast("PDF 匯出失敗，請稍後再試");
+    } finally {
+      setExporting(false);
+      window.setTimeout(() => setToast(""), 2200);
+    }
+  }
+
+  async function exportPng() {
+    setExporting(true);
+    setExportOpen(false);
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    try {
+      const canvas = await renderMindMapCanvas();
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("PNG unavailable")), "image/png"));
+      downloadFile([blob], "image/png", "png");
+      setToast("PNG 已下載");
+    } catch {
+      setToast("PNG 匯出失敗，請稍後再試");
     } finally {
       setExporting(false);
       window.setTimeout(() => setToast(""), 2200);
@@ -264,6 +314,7 @@ export default function Home() {
             {exportOpen && <div className="export-menu" role="menu">
               <button role="menuitem" onClick={exportMarkdown}><span className="file-icon">M↓</span><span><strong>Markdown</strong><small>保留節點階層與說明</small></span></button>
               <button role="menuitem" onClick={exportPdf}><span className="file-icon pdf">P↓</span><span><strong>PDF 文件</strong><small>輸出完整心智圖畫布</small></span></button>
+              <button role="menuitem" onClick={exportPng}><span className="file-icon png">PNG</span><span><strong>PNG 圖片</strong><small>高解析度圖形檔</small></span></button>
             </div>}
           </div>
           <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); setToast("連結已複製"); }}>分享想法 <span>↗</span></button>
@@ -284,7 +335,7 @@ export default function Home() {
         <div className="canvas" onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
           <div className="canvas-hint">拖曳節點整理思緒 · 雙擊編輯內容</div>
           <div className="map-stage" style={{ transform: `scale(${zoom / 100})` }}>
-            {connections.map((line) => <span key={line.id} className={`connection ${line.tone}`} style={{ left: line.x, top: line.y, width: line.length, transform: `rotate(${line.angle}deg)` }} />)}
+            {connections.map((line) => <span key={line.id} className={`connection ${line.tone}`} style={{ left: line.x, top: line.y, width: line.length, height: line.thickness, marginTop: -line.thickness / 2, transform: `rotate(${line.angle}deg)` }} />)}
             {nodes.map((node) => (
               <article
                 key={node.id}
