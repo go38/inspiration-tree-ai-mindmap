@@ -14,9 +14,7 @@ button { color:inherit; }
 .status-dot { width:7px; height:7px; border-radius:50%; background:var(--sage); box-shadow:0 0 0 3px #e7eee2; }
 .saved { color:#9a9388; font-size:11px; font-weight:450; }
 .top-actions { justify-self:end; display:flex; gap:8px; }
-.icon-button,.share-button,.export-button,.tool,.zoom-control button { border:0; background:transparent; cursor:pointer; }
-.icon-button { width:38px; height:38px; border:1px solid var(--line); border-radius:10px; font-size:20px; }
-.icon-button:disabled { opacity:.3; }
+.share-button,.export-button,.tool,.zoom-control button { border:0; background:transparent; cursor:pointer; }
 .share-button { height:39px; padding:0 16px; border-radius:10px; background:var(--ink); color:white; font-weight:650; font-size:12px; box-shadow:0 3px 0 #a79d8e; }
 .share-button span { color:var(--sun); margin-left:8px; }
 .export-wrap { position:relative; }
@@ -42,6 +40,7 @@ button { color:inherit; }
 .tool:hover:not(:disabled) { background:#eee8dd; transform:translateY(-1px); }
 .tool.danger:hover:not(:disabled) { background:#fae5df; color:#ad4937; }
 .tool:disabled { opacity:.28; cursor:not-allowed; }
+.tool-divider { width:30px; height:1px; margin:2px 0; background:var(--line); }
 .canvas { position:relative; overflow:hidden; touch-action:none; background-color:var(--paper); background-image:radial-gradient(#bbb3a6 1px, transparent 1px); background-size:24px 24px; }
 .canvas::before { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(circle at 52% 45%,rgba(255,252,246,.85),rgba(247,243,234,.1) 55%); }
 .canvas-hint { position:absolute; z-index:4; top:18px; left:50%; transform:translateX(-50%); border:1px solid var(--line); background:rgba(255,252,246,.88); color:#8b8479; padding:7px 12px; border-radius:20px; font-size:10px; }

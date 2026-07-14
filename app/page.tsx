@@ -12,6 +12,11 @@ type NodeItem = {
   tone: "ink" | "coral" | "sage" | "sun";
 };
 
+type HistoryState = {
+  nodes: NodeItem[];
+  selectedId: number;
+};
+
 function createCurvedRibbon(x1: number, y1: number, x2: number, y2: number, startWidth: number, endWidth: number, seed: number) {
   const dx = x2 - x1, dy = y2 - y1;
   const length = Math.max(Math.hypot(dx, dy), 1);
@@ -101,7 +106,8 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [history, setHistory] = useState<NodeItem[][]>([]);
+  const [history, setHistory] = useState<HistoryState[]>([]);
+  const [future, setFuture] = useState<HistoryState[]>([]);
   const [suggestionRound, setSuggestionRound] = useState(0);
   const drag = useRef<{ id: number; ox: number; oy: number } | null>(null);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
@@ -129,7 +135,10 @@ export default function Home() {
     });
   }, [nodes]);
 
-  function checkpoint() { setHistory((items) => [...items.slice(-14), nodes]); }
+  function checkpoint() {
+    setHistory((items) => [...items.slice(-14), { nodes, selectedId }]);
+    setFuture([]);
+  }
 
   function addNode(parentId = selectedId, title = "新想法", note = "雙擊節點即可編輯") {
     checkpoint();
@@ -185,9 +194,23 @@ export default function Home() {
   function undo() {
     const previous = history.at(-1);
     if (!previous) return;
-    setNodes(previous);
+    setFuture((items) => [{ nodes, selectedId }, ...items].slice(0, 15));
+    setNodes(previous.nodes);
     setHistory((items) => items.slice(0, -1));
-    setSelectedId(previous[0]?.id ?? 1);
+    setSelectedId(previous.selectedId);
+    setToast("已復原上一步");
+    window.setTimeout(() => setToast(""), 1600);
+  }
+
+  function redo() {
+    const next = future[0];
+    if (!next) return;
+    setHistory((items) => [...items.slice(-14), { nodes, selectedId }]);
+    setNodes(next.nodes);
+    setSelectedId(next.selectedId);
+    setFuture((items) => items.slice(1));
+    setToast("已重做上一步");
+    window.setTimeout(() => setToast(""), 1600);
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
@@ -357,7 +380,6 @@ export default function Home() {
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
         <div className="document-title"><span className="status-dot" />我的理想生活 <span className="saved">互動草稿</span></div>
         <div className="top-actions">
-          <button className="icon-button" onClick={undo} disabled={!history.length} aria-label="復原">↶</button>
           <div className="export-wrap">
             <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>
             {exportOpen && <div className="export-menu" role="menu">
@@ -377,6 +399,13 @@ export default function Home() {
           </button>
           <button className="tool danger" onClick={removeSelectedNode} aria-label="移除目前節點" disabled={selected.parent === null}>
             <span aria-hidden="true">−</span><small>移除</small>
+          </button>
+          <span className="tool-divider" aria-hidden="true" />
+          <button className="tool" onClick={undo} aria-label="復原上一步" disabled={!history.length}>
+            <span aria-hidden="true">↶</span><small>復原</small>
+          </button>
+          <button className="tool" onClick={redo} aria-label="重做上一步" disabled={!future.length}>
+            <span aria-hidden="true">↷</span><small>重做</small>
           </button>
         </nav>
 
