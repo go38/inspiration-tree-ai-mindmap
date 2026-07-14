@@ -314,7 +314,7 @@ export default function Home() {
             {exportOpen && <div className="export-menu" role="menu">
               <button role="menuitem" onClick={exportMarkdown}><span className="file-icon">M↓</span><span><strong>Markdown</strong><small>保留節點階層與說明</small></span></button>
               <button role="menuitem" onClick={exportPdf}><span className="file-icon pdf">P↓</span><span><strong>PDF 文件</strong><small>輸出完整心智圖畫布</small></span></button>
-              <button role="menuitem" onClick={exportPng}><span className="file-icon png">PNG</span><span><strong>PNG 圖片</strong><small>高解析度圖形檔</small></span></button>
+              <button role="menuitem" onClick={exportPng}><span className="file-icon png">PNG</span><span><strong>PNG 圖形檔</strong><small>高解析度完整心智圖</small></span></button>
             </div>}
           </div>
           <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); setToast("連結已複製"); }}>分享想法 <span>↗</span></button>
