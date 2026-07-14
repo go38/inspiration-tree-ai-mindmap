@@ -1,48 +1,18 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-
-type NodeItem = {
-  id: number;
-  parent: number | null;
-  text: string;
-  note: string;
-  x: number;
-  y: number;
-  tone: "ink" | "coral" | "sage" | "sun";
-};
-
-type HistoryState = {
-  nodes: NodeItem[];
-  selectedId: number;
-};
-
-function createCurvedRibbon(x1: number, y1: number, x2: number, y2: number, startWidth: number, endWidth: number, seed: number) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const length = Math.max(Math.hypot(dx, dy), 1);
-  const nx = -dy / length, ny = dx / length;
-  const bend = Math.min(46, length * .13) * (seed % 2 === 0 ? 1 : -1);
-  const c1x = x1 + dx * .34 + nx * bend, c1y = y1 + dy * .34 + ny * bend;
-  const c2x = x1 + dx * .68 + nx * bend, c2y = y1 + dy * .68 + ny * bend;
-  const startHalf = startWidth / 2, endHalf = endWidth / 2;
-  const top = {
-    start: [x1 + nx * startHalf, y1 + ny * startHalf],
-    c1: [c1x + nx * startHalf * .72, c1y + ny * startHalf * .72],
-    c2: [c2x + nx * endHalf * 1.35, c2y + ny * endHalf * 1.35],
-    end: [x2 + nx * endHalf, y2 + ny * endHalf],
-  };
-  const bottom = {
-    start: [x1 - nx * startHalf, y1 - ny * startHalf],
-    c1: [c1x - nx * startHalf * .72, c1y - ny * startHalf * .72],
-    c2: [c2x - nx * endHalf * 1.35, c2y - ny * endHalf * 1.35],
-    end: [x2 - nx * endHalf, y2 - ny * endHalf],
-  };
-  const p = (point: number[]) => `${point[0].toFixed(1)} ${point[1].toFixed(1)}`;
-  return {
-    top, bottom,
-    path: `M ${p(top.start)} C ${p(top.c1)}, ${p(top.c2)}, ${p(top.end)} L ${p(bottom.end)} C ${p(bottom.c2)}, ${p(bottom.c1)}, ${p(bottom.start)} Z`,
-  };
-}
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildMarkdownLines,
+  collectSubtreeIds,
+  createCurvedRibbon,
+  depthOf,
+  nextNodeId,
+  pushHistory,
+  safeFilename,
+  type HistoryState,
+  type NodeItem,
+} from "./lib/mindmap";
+import { clearDraft, loadDraft, saveDraft } from "./lib/storage";
 
 const initialNodes: NodeItem[] = [
   { id: 1, parent: null, text: "打造理想生活", note: "從真正重要的事開始", x: 420, y: 300, tone: "ink" },
@@ -109,34 +79,63 @@ export default function Home() {
   const [history, setHistory] = useState<HistoryState[]>([]);
   const [future, setFuture] = useState<HistoryState[]>([]);
   const [suggestionRound, setSuggestionRound] = useState(0);
+  const [persisted, setPersisted] = useState(false);
   const drag = useRef<{ id: number; ox: number; oy: number } | null>(null);
+  const hydrated = useRef(false);
+  const saveTimer = useRef<number | null>(null);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const aiSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
 
   const connections = useMemo(() => {
     const byId = new Map(nodes.map((node) => [node.id, node]));
-    const depthOf = (node: NodeItem) => {
-      let depth = 0;
-      let current: NodeItem | undefined = node;
-      while (current?.parent !== null) {
-        depth += 1;
-        current = byId.get(current.parent);
-      }
-      return depth;
-    };
     return nodes.flatMap((node) => {
       const parent = node.parent === null ? undefined : byId.get(node.parent);
       if (!parent) return [];
       const x1 = parent.x + 90, y1 = parent.y + 35, x2 = node.x + 90, y2 = node.y + 35;
-      const thickness = Math.max(4, 10 - (depthOf(node) - 1) * 3);
+      const thickness = Math.max(4, 10 - (depthOf(nodes, node) - 1) * 3);
       const curve = createCurvedRibbon(x1, y1, x2, y2, thickness, Math.max(1.2, thickness * .12), parent.id + node.id);
       return [{ id: `${parent.id}-${node.id}`, path: curve.path, tone: node.tone }];
     });
   }, [nodes]);
 
+  // Debounced local autosave. Skips until the initial restore has run so a
+  // freshly loaded page never overwrites a saved draft with the sample map.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      saveDraft(nodes, selectedId);
+      setPersisted(true);
+    }, 400);
+    return () => {
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+    };
+  }, [nodes, selectedId]);
+
+  // Restore the most recent draft once, after mount (avoids hydration mismatch).
+  useEffect(() => {
+    const draft = loadDraft();
+    if (draft) {
+      setNodes(draft.nodes);
+      setSelectedId(draft.selectedId);
+      setPersisted(true);
+    }
+    hydrated.current = true;
+  }, []);
+
+  function resetToSample() {
+    if (!window.confirm("確定要清除目前草稿並回到預設範例嗎？此動作可以復原。")) return;
+    checkpoint();
+    setNodes(initialNodes);
+    setSelectedId(1);
+    clearDraft();
+    setToast("已重設為預設範例");
+    window.setTimeout(() => setToast(""), 1800);
+  }
+
   function checkpoint() {
-    setHistory((items) => [...items.slice(-14), { nodes, selectedId }]);
+    setHistory((items) => pushHistory(items, { nodes, selectedId }));
     setFuture([]);
   }
 
@@ -144,7 +143,7 @@ export default function Home() {
     checkpoint();
     const parent = nodes.find((node) => node.id === parentId) ?? nodes[0];
     const childCount = nodes.filter((node) => node.parent === parent.id).length;
-    const nextId = Math.max(...nodes.map((node) => node.id)) + 1;
+    const nextId = nextNodeId(nodes);
     const tones: NodeItem["tone"][] = ["coral", "sage", "sun"];
     const next: NodeItem = {
       id: nextId, parent: parent.id, text: title, note,
@@ -166,17 +165,7 @@ export default function Home() {
       return;
     }
     checkpoint();
-    const removedIds = new Set([target.id]);
-    let foundChild = true;
-    while (foundChild) {
-      foundChild = false;
-      nodes.forEach((node) => {
-        if (node.parent !== null && removedIds.has(node.parent) && !removedIds.has(node.id)) {
-          removedIds.add(node.id);
-          foundChild = true;
-        }
-      });
-    }
+    const removedIds = collectSubtreeIds(nodes, target.id);
     setNodes((items) => items.filter((node) => !removedIds.has(node.id)));
     setSelectedId(target.parent);
     setToast(removedIds.size > 1 ? `已移除「${target.text}」及 ${removedIds.size - 1} 個子節點` : `已移除「${target.text}」`);
@@ -205,7 +194,7 @@ export default function Home() {
   function redo() {
     const next = future[0];
     if (!next) return;
-    setHistory((items) => [...items.slice(-14), { nodes, selectedId }]);
+    setHistory((items) => pushHistory(items, { nodes, selectedId }));
     setNodes(next.nodes);
     setSelectedId(next.selectedId);
     setFuture((items) => items.slice(1));
@@ -228,10 +217,6 @@ export default function Home() {
     setPrompt("");
   }
 
-  function safeFilename(name: string) {
-    return name.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "-").slice(0, 48) || "心智圖";
-  }
-
   function downloadFile(parts: BlobPart[], type: string, extension: string) {
     const blob = new Blob(parts, { type });
     const url = URL.createObjectURL(blob);
@@ -245,14 +230,7 @@ export default function Home() {
   }
 
   function exportMarkdown() {
-    const roots = nodes.filter((node) => node.parent === null);
-    const lines = ["# 靈感樹心智圖", "", `> 匯出時間：${new Date().toLocaleString("zh-TW")}`, ""];
-    function appendNode(node: NodeItem, depth: number) {
-      lines.push(`${"#".repeat(Math.min(depth + 1, 6))} ${node.text.replace(/\n/g, " ")}`, "");
-      if (node.note.trim()) lines.push(node.note.trim(), "");
-      nodes.filter((item) => item.parent === node.id).forEach((child) => appendNode(child, depth + 1));
-    }
-    roots.forEach((root) => appendNode(root, 1));
+    const lines = buildMarkdownLines(nodes, new Date().toLocaleString("zh-TW"));
     downloadFile(["\uFEFF", lines.join("\n")], "text/markdown;charset=utf-8", "md");
     setExportOpen(false);
     setToast("Markdown 已下載");
@@ -307,12 +285,7 @@ export default function Home() {
         const parent = nodes.find((item) => item.id === node.parent);
         if (!parent) return;
         const color = node.tone === "sage" ? "#7f9876" : node.tone === "sun" ? "#d8ad44" : "#ed765f";
-        let depth = 1;
-        let ancestor = parent;
-        while (ancestor.parent !== null) {
-          depth += 1;
-          ancestor = nodes.find((item) => item.id === ancestor.parent) ?? ancestor;
-        }
+        const depth = depthOf(nodes, node);
         const x1 = ox + (parent.x + 90) * scale, y1 = oy + (parent.y + 35) * scale;
         const x2 = ox + (node.x + 90) * scale, y2 = oy + (node.y + 35) * scale;
         const startWidth = Math.max(4, 10 - (depth - 1) * 3) * scale;
@@ -378,7 +351,7 @@ export default function Home() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
-        <div className="document-title"><span className="status-dot" />我的理想生活 <span className="saved">互動草稿</span></div>
+        <div className="document-title"><span className="status-dot" />我的理想生活 <span className="saved">{persisted ? "已自動保存" : "互動草稿"}</span></div>
         <div className="top-actions">
           <div className="export-wrap">
             <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>
@@ -406,6 +379,10 @@ export default function Home() {
           </button>
           <button className="tool" onClick={redo} aria-label="重做上一步" disabled={!future.length}>
             <span aria-hidden="true">↷</span><small>重做</small>
+          </button>
+          <span className="tool-divider" aria-hidden="true" />
+          <button className="tool" onClick={resetToSample} aria-label="清除草稿並重設為預設範例">
+            <span aria-hidden="true">⟳</span><small>重設</small>
           </button>
         </nav>
 

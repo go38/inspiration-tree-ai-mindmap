@@ -27,11 +27,13 @@ This starter does not use `wrangler.jsonc`.
 - `app/page.tsx`：心智圖與 AI 協作互動
 - `app/globals.css`：網站視覺與響應式版面
 - `app/layout.tsx`：網站中繼資料與語言設定
+- `app/lib/mindmap.ts`：心智圖純函式（節點/歷史/匯出邏輯），與 UI 解耦以利單元測試
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+
+> 保留供未來使用的 scaffolding：`db/schema.ts`（目前刻意留空）、`examples/d1/`、
+> `drizzle.config.ts`、`worker/index.ts` 與 D1/R2 綁定，都是為 P1「雲端保存」預留的接口，
+> 目前的心智圖原型尚未用到。詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
 
 ## Workspace Auth Headers
 

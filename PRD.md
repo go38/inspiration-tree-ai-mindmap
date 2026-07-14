@@ -242,10 +242,13 @@
 
 ### P0：可持續使用
 
-- 本機自動保存與草稿還原。
+- 修復失效測試：`tests/rendered-html.test.mjs` 仍是 starter 模板殘留（斷言 loading skeleton 與 `app/_sites-preview/`），與現行心智圖 App 不符，須改為驗證真實 App，讓 `npm test` 通過。
+- 本機自動保存與草稿還原（localStorage）。
+- 補齊核心互動測試及匯出測試。
 - 鍵盤快捷鍵。
 - 自動布局與避免節點重疊。
-- 補齊核心互動測試及匯出測試。
+
+> 詳細任務拆解與驗收條件見 [ROADMAP.md](./ROADMAP.md)。
 
 ### P1：真正 AI 與帳號資料
 
