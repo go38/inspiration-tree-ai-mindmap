@@ -1,6 +1,6 @@
 # 靈感樹｜後續開發路線圖
 
-> 文件版本：1.0
+> 文件版本：1.1
 > 建立日期：2026-07-15
 > 對應產品需求：見 [PRD.md](./PRD.md) §12 路線圖
 > 目的：把 PRD 的方向拆成可逐項核可、可驗收的開發任務，並補上「地基」批次。
@@ -33,11 +33,13 @@
 
 | # | 任務 | 要動的檔案 | 做法 | 驗收條件 |
 |---|---|---|---|---|
-| 1-1 | 本機自動保存/還原（SAV-01） | `app/page.tsx` + 新 `app/lib/storage.ts` | `useEffect` 監看 `nodes/selectedId`，debounce 寫入 localStorage；載入時還原，帶版本號與「重設為範例」按鈕 | 重整後草稿還原；PRD §14 第 1 項打勾 |
-| 1-2 | 修 undo「選取即記歷史」bug | `app/page.tsx` 的 `onPointerDown`、`checkpoint` | 拖曳開始先暫存位置，只有真正位移才 commit checkpoint；純選取不進歷史 | undo 一律還原有意義的變更，不會只還原選取 |
-| 1-3 | 內嵌節點編輯取代 `window.prompt` | `app/page.tsx` 的 `editNode` + CSS | 雙擊就地編輯標題與說明，Esc 取消、Enter/失焦儲存；空標題不送出 | 符合 NOD-02，且無阻塞式原生對話框 |
-| 1-4 | 自動布局 / 避免重疊（CAN-06） | 新 `app/lib/layout.ts` | 實作放射/樹狀布局（依層級角度分佈），工具列加「整理」鍵，可 undo | 100 節點不重疊、可復原 |
-| 1-5 | 基本鍵盤操作（P1 提前） | `app/page.tsx` | Delete=移除、Cmd/Ctrl+Z=undo、Shift+Cmd+Z=redo、Tab 切換焦點節點 | 鍵盤可完成核心編輯（PRD §14 第 2 項） |
+| 1-1 | ✅ 本機自動保存/還原（SAV-01） | `app/lib/storage.ts`、`app/MindMapStudio.tsx` | debounce 保存節點、選取與文件標題 | 重整後草稿與標題還原 |
+| 1-2 | ⏳ 優化拖曳歷史 | `app/MindMapStudio.tsx` | 只有真正位移才建立 checkpoint | 選取不產生無意義歷史 |
+| 1-3 | ✅ 內嵌節點編輯 | `app/MindMapStudio.tsx` + CSS | 雙擊／按鈕就地編輯，Esc 取消、Enter 儲存 | 無阻塞式原生對話框 |
+| 1-4 | ⏳ 自動布局 / 避免重疊（CAN-06） | 新 `app/lib/layout.ts` | 放射／樹狀布局，可復原 | 100 節點不重疊 |
+| 1-5 | ✅ 基本鍵盤操作 | `app/MindMapStudio.tsx` | Enter 同層、Tab 子節點、Delete 移除、Esc 取消 | 鍵盤可完成核心編輯 |
+| 1-6 | ✅ 大綱、搜尋與收合 | `app/MindMapStudio.tsx` + CSS | 畫布／大綱雙模式、搜尋醒目、分支收合 | 大型心智圖可快速定位與減少雜訊 |
+| 1-7 | ✅ 手機 AI bottom sheet | `app/MindMapStudio.tsx` + CSS | AI 面板預設收合，可展開或關閉 | 手機畫布不再被 AI 面板長時間遮擋 |
 
 ---
 
@@ -60,9 +62,9 @@
 | 2-5 | 衝突提示 UI | ✅ 完成 | `app/MindMapStudio.tsx` | 409 顯示橫幅：載入最新版／用我的版本覆蓋 |
 | 2-6 | 抽出共用元件 | ✅ 完成 | `app/MindMapStudio.tsx`、`app/lib/sampleMap.ts`、`app/page.tsx` | 本機頁與共享頁共用同一 studio，行為由測試護欄守護 |
 
-> 進度（2026-07-15）：2-1～2-6 已實作於 `batch-2-shared-maps`，資料層與 API 已端到端驗證；
-> UI 重構待一次本機 `npm run build` + `npm run dev` 端到端確認。首頁「建立共享連結」會把目前
-> 地圖 POST 成雲端副本並導向 `/m/[id]`，即團隊共享入口。
+> 進度（2026-07-15）：2-1～2-6 已合併至 `main`，建置及測試通過並公開部署。首頁「建立共享
+> 連結」會將目前地圖與自訂標題 POST 成雲端副本並導向 `/m/[id]`；共享頁以版本樂觀鎖避免
+> 靜默覆蓋。
 
 > 免費彩蛋：即使不做登入，workspace 網站仍會自動帶 `oai-authenticated-user-email` header，
 > 可零成本填 `updatedBy`（顯示「最後由 ○○○ 編輯」），日後要做「我的地圖列表」也能直接用。
@@ -97,7 +99,7 @@
 
 ## 建議執行順序
 
-1. **批次 0 → 1 已完成**（測試護欄 + 本機自動保存），已合併進 `main`。
-2. **批次 2（無登入共享地圖）為目前主線**：本機可用 vite 模擬的 D1 綁定開發，發佈時才接真 D1。
-3. **批次 3（真 AI）可與批次 2 並行或之後**，彼此獨立。
-4. 每次改行為前，先確保測試護欄到位；共享頁的 API 需補 D1 讀寫與衝突測試。
+1. **批次 0、批次 2 與批次 1 大部分功能已完成**，產品版本為 `v0.6.0`。
+2. 先完成批次 1 剩餘的拖曳歷史與自動布局。
+3. 下一個主要里程碑為批次 3 真 AI；帳號與即時協作延後。
+4. 每次發佈依 [VERSIONING.md](./VERSIONING.md) 更新 PRD、開發日誌與版本紀錄。

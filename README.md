@@ -3,8 +3,11 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供 AI 協作區協助拆解問題與探索更多方向。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
+- 目前產品版本：`v0.6.0`
 - 產品需求文件：[PRD.md](./PRD.md)
 - 完整開發紀錄：[DEVELOPMENT.md](./DEVELOPMENT.md)
+- 版本紀錄：[CHANGELOG.md](./CHANGELOG.md)
+- 版本管理規範：[VERSIONING.md](./VERSIONING.md)
 
 ## 本機啟動
 
@@ -31,9 +34,9 @@ This starter does not use `wrangler.jsonc`.
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
 
-> 保留供未來使用的 scaffolding：`db/schema.ts`（目前刻意留空）、`examples/d1/`、
-> `drizzle.config.ts`、`worker/index.ts` 與 D1/R2 綁定，都是為 P1「雲端保存」預留的接口，
-> 目前的心智圖原型尚未用到。詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+> `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖；
+> `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
+> 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
 
 ## Workspace Auth Headers
 
