@@ -73,6 +73,7 @@ type ServerMap = {
 };
 
 type SyncState = "idle" | "saving" | "saved" | "conflict" | "error";
+type ViewMode = "canvas" | "outline";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "雲端共享",
@@ -106,7 +107,18 @@ export default function MindMapStudio({
   const [sync, setSync] = useState<SyncState>("idle");
   const [conflict, setConflict] = useState<ServerMap | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("canvas");
+  const [mobileAiOpen, setMobileAiOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [collapsedIds, setCollapsedIds] = useState<Set<number>>(() => new Set());
+  const [suggestionSelection, setSuggestionSelection] = useState<Set<string>>(() => new Set());
+  const [suggestionPreviewOpen, setSuggestionPreviewOpen] = useState(false);
+  const [stageOffset, setStageOffset] = useState({ x: 0, y: 0 });
   const drag = useRef<{ id: number; ox: number; oy: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const version = useRef(persistence.mode === "cloud" ? persistence.version : 1);
@@ -114,17 +126,42 @@ export default function MindMapStudio({
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const aiSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
 
+  const visibleNodes = useMemo(() => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    return nodes.filter((node) => {
+      let current = node.parent === null ? undefined : byId.get(node.parent);
+      while (current) {
+        if (collapsedIds.has(current.id)) return false;
+        current = current.parent === null ? undefined : byId.get(current.parent);
+      }
+      return true;
+    });
+  }, [collapsedIds, nodes]);
+  const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
+  const outlineNodes = useMemo(() => {
+    const ordered: { node: NodeItem; depth: number }[] = [];
+    const root = nodes.find((node) => node.parent === null);
+    const append = (node: NodeItem, depth: number) => {
+      ordered.push({ node, depth });
+      if (collapsedIds.has(node.id)) return;
+      nodes.filter((item) => item.parent === node.id).forEach((child) => append(child, depth + 1));
+    };
+    if (root) append(root, 0);
+    return ordered;
+  }, [collapsedIds, nodes]);
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase("zh-TW");
+
   const connections = useMemo(() => {
     const byId = new Map(nodes.map((node) => [node.id, node]));
-    return nodes.flatMap((node) => {
+    return visibleNodes.flatMap((node) => {
       const parent = node.parent === null ? undefined : byId.get(node.parent);
-      if (!parent) return [];
+      if (!parent || !visibleNodeIds.has(parent.id)) return [];
       const x1 = parent.x + 90, y1 = parent.y + 35, x2 = node.x + 90, y2 = node.y + 35;
       const thickness = Math.max(4, 10 - (depthOf(nodes, node) - 1) * 3);
       const curve = createCurvedRibbon(x1, y1, x2, y2, thickness, Math.max(1.2, thickness * .12), parent.id + node.id);
       return [{ id: `${parent.id}-${node.id}`, path: curve.path, tone: node.tone }];
     });
-  }, [nodes]);
+  }, [nodes, visibleNodeIds, visibleNodes]);
 
   function flashToast(message: string, ms = 1800) {
     setToast(message);
@@ -163,13 +200,16 @@ export default function MindMapStudio({
   useEffect(() => {
     if (!hydrated.current) return;
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+    setSync("saving");
+    if (!isCloud) setPersisted(false);
     const delay = isCloud ? 800 : 400;
     saveTimer.current = window.setTimeout(() => {
       if (persistence.mode === "cloud") {
         void saveToCloud();
       } else {
-        saveDraft(nodes, selectedId);
-        setPersisted(true);
+        const saved = saveDraft(nodes, selectedId);
+        setPersisted(saved);
+        setSync(saved ? "saved" : "error");
       }
     }, delay);
     return () => {
@@ -266,6 +306,33 @@ export default function MindMapStudio({
     flashToast(`已加入「${title}」`);
   }
 
+  function addSiblingNode() {
+    const parentId = selected.parent ?? selected.id;
+    addNode(parentId);
+  }
+
+  function beginEdit(node: NodeItem) {
+    setSelectedId(node.id);
+    setEditingId(node.id);
+    setEditText(node.text);
+    setEditNote(node.note);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText("");
+    setEditNote("");
+  }
+
+  function saveInlineEdit() {
+    const text = editText.trim();
+    if (editingId === null || !text) return;
+    checkpoint();
+    setNodes((items) => items.map((item) => item.id === editingId ? { ...item, text, note: editNote.trim() } : item));
+    setEditingId(null);
+    flashToast("節點已更新");
+  }
+
   function removeSelectedNode() {
     const target = nodes.find((node) => node.id === selectedId);
     if (!target || target.parent === null) {
@@ -279,12 +346,56 @@ export default function MindMapStudio({
     flashToast(removedIds.size > 1 ? `已移除「${target.text}」及 ${removedIds.size - 1} 個子節點` : `已移除「${target.text}」`, 2200);
   }
 
-  function editNode(node: NodeItem) {
-    const text = window.prompt("編輯節點標題", node.text);
-    if (!text?.trim()) return;
-    const note = window.prompt("補充說明", node.note) ?? node.note;
+  function toggleCollapsed(id: number) {
+    setCollapsedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSuggestion(title: string) {
+    setSuggestionSelection((current) => {
+      const next = new Set(current);
+      if (next.has(title)) next.delete(title); else next.add(title);
+      return next;
+    });
+  }
+
+  function addSelectedSuggestions() {
+    const chosen = aiSuggestions.filter((item) => suggestionSelection.has(item.title));
+    if (!chosen.length) return;
     checkpoint();
-    setNodes((items) => items.map((item) => item.id === node.id ? { ...item, text: text.trim(), note } : item));
+    const parent = selected;
+    const existingChildren = nodes.filter((node) => node.parent === parent.id).length;
+    let id = nextNodeId(nodes);
+    const tones: NodeItem["tone"][] = ["coral", "sage", "sun"];
+    const created = chosen.map((item, index) => ({
+      id: id++, parent: parent.id, text: item.title, note: item.note,
+      x: Math.max(20, Math.min(900, parent.x + (parent.x < 430 ? -210 : 210))),
+      y: Math.max(20, Math.min(560, parent.y - 65 + (existingChildren + index) * 115)),
+      tone: tones[(existingChildren + index) % tones.length],
+    }));
+    setNodes((items) => [...items, ...created]);
+    setSelectedId(created[0].id);
+    setSuggestionSelection(new Set());
+    setSuggestionPreviewOpen(false);
+    flashToast(`已加入 ${created.length} 個 AI 靈感`);
+  }
+
+  function fitToView() {
+    if (!visibleNodes.length) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const minX = Math.min(...visibleNodes.map((node) => node.x));
+    const maxX = Math.max(...visibleNodes.map((node) => node.x + (node.tone === "ink" ? 204 : 180)));
+    const minY = Math.min(...visibleNodes.map((node) => node.y));
+    const maxY = Math.max(...visibleNodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
+    const nextZoom = rect
+      ? Math.round(Math.max(70, Math.min(130, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
+      : 100;
+    setZoom(nextZoom);
+    setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
+    flashToast("已將心智圖調整至畫面中央");
   }
 
   function undo() {
@@ -451,8 +562,33 @@ export default function MindMapStudio({
     }
   }
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, button, [contenteditable='true']")) return;
+      if (editingId !== null) {
+        if (event.key === "Escape") cancelEdit();
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addSiblingNode();
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+        addNode(selected.id);
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        removeSelectedNode();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // Keyboard actions intentionally follow the latest selected node and map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, nodes, selectedId]);
+
   const documentTitle = persistence.mode === "cloud" ? persistence.title : "我的理想生活";
-  const statusLabel = isCloud ? SYNC_LABEL[sync] : persisted ? "已自動保存" : "互動草稿";
+  const statusLabel = isCloud ? SYNC_LABEL[sync] : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
 
   return (
     <main className="app-shell">
@@ -501,6 +637,10 @@ export default function MindMapStudio({
           <button className="tool" onClick={redo} aria-label="重做上一步" disabled={!future.length}>
             <span aria-hidden="true">↷</span><small>重做</small>
           </button>
+          <span className="tool-divider" aria-hidden="true" />
+          <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => setViewMode((mode) => mode === "canvas" ? "outline" : "canvas")} aria-label={viewMode === "canvas" ? "切換至大綱模式" : "切換至心智圖模式"}>
+            <span aria-hidden="true">≡</span><small>{viewMode === "canvas" ? "大綱" : "畫布"}</small>
+          </button>
           {!isCloud && <>
             <span className="tool-divider" aria-hidden="true" />
             <button className="tool" onClick={resetToSample} aria-label="清除草稿並重設為預設範例">
@@ -509,42 +649,63 @@ export default function MindMapStudio({
           </>}
         </nav>
 
-        <div className="canvas" onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
-          <div className="canvas-hint">拖曳節點整理思緒 · 雙擊編輯內容</div>
-          <div className="map-stage" style={{ transform: `scale(${zoom / 100})` }}>
+        <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""}`} onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
+          <div className="canvas-commandbar">
+            <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => setViewMode("canvas")}>心智圖</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => setViewMode("outline")}>大綱</button></div>
+            <label className="node-search"><span aria-hidden="true">⌕</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜尋節點" aria-label="搜尋節點" /></label>
+            <button className="fit-button" onClick={fitToView}>適合畫面</button>
+          </div>
+          {viewMode === "canvas" ? <>
+          <div className="canvas-hint">拖曳整理 · 雙擊編輯 · Enter 同層 · Tab 子節點</div>
+          <div className="map-stage" style={{ transform: `translate(${stageOffset.x}px, ${stageOffset.y}px) scale(${zoom / 100})` }}>
             <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
               {connections.map((line) => <path key={line.id} className={`connection ${line.tone}`} d={line.path} />)}
             </svg>
-            {nodes.map((node) => (
+            {visibleNodes.map((node) => {
+              const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
+              const hasChildren = nodes.some((item) => item.parent === node.id);
+              return (
               <article
                 key={node.id}
-                className={`mind-node ${node.tone} ${node.id === selectedId ? "selected" : ""}`}
+                className={`mind-node ${node.tone} ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`}
                 style={{ left: node.x, top: node.y }}
-                onPointerDown={(event) => { checkpoint(); setSelectedId(node.id); const rect = event.currentTarget.getBoundingClientRect(); drag.current = { id: node.id, ox: (event.clientX - rect.left) * (100 / zoom), oy: (event.clientY - rect.top) * (100 / zoom) }; event.currentTarget.setPointerCapture(event.pointerId); }}
-                onDoubleClick={() => editNode(node)}
+                onPointerDown={(event) => { if (editingId === node.id) return; checkpoint(); setSelectedId(node.id); const rect = event.currentTarget.getBoundingClientRect(); drag.current = { id: node.id, ox: (event.clientX - rect.left) * (100 / zoom), oy: (event.clientY - rect.top) * (100 / zoom) }; event.currentTarget.setPointerCapture(event.pointerId); }}
+                onDoubleClick={() => beginEdit(node)}
               >
-                <div><h3>{node.text}</h3><p>{node.note}</p></div>
-                <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); addNode(node.id); }} aria-label={`在${node.text}下新增節點`}>＋</button>
+                {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div><h3>{node.text}</h3><p>{node.note}</p></div>}
+                {editingId !== node.id && <div className="node-actions"><button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginEdit(node); }} aria-label={`編輯${node.text}`}>✎</button>{hasChildren && <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); toggleCollapsed(node.id); }} aria-label={`${collapsedIds.has(node.id) ? "展開" : "收合"}${node.text}`}>{collapsedIds.has(node.id) ? "▸" : "▾"}</button>}<button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); addNode(node.id); }} aria-label={`在${node.text}下新增節點`}>＋</button></div>}
               </article>
-            ))}
+            );})}
           </div>
-          <div className="zoom-control"><button onClick={() => setZoom(Math.max(70, zoom - 10))}>−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(130, zoom + 10))}>＋</button><button onClick={() => setZoom(100)}>◎</button></div>
+          <div className="zoom-control"><button onClick={() => setZoom(Math.max(70, zoom - 10))} aria-label="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(130, zoom + 10))} aria-label="放大">＋</button><button onClick={fitToView} aria-label="適合畫面">◎</button></div>
+          </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>點選節點後可直接編輯或新增子節點</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
+            const hasChildren = nodes.some((item) => item.parent === node.id);
+            const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
+            return <div className={`outline-row ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`} style={{ paddingLeft: 18 + depth * 28 }} key={node.id}>
+              <button className="outline-collapse" onClick={() => hasChildren && toggleCollapsed(node.id)} aria-label={hasChildren ? `${collapsedIds.has(node.id) ? "展開" : "收合"}${node.text}` : undefined} disabled={!hasChildren}>{hasChildren ? collapsedIds.has(node.id) ? "▸" : "▾" : "·"}</button>
+              {editingId === node.id ? <div className="outline-editor"><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} aria-label="節點說明" /><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></div> : <button className="outline-copy" onClick={() => setSelectedId(node.id)} onDoubleClick={() => beginEdit(node)}><strong>{node.text}</strong><span>{node.note || "尚未加入說明"}</span></button>}
+              {editingId !== node.id && <div className="outline-actions"><button onClick={() => beginEdit(node)}>編輯</button><button onClick={() => addNode(node.id)}>＋ 子節點</button></div>}
+            </div>;
+          })}</div></div>}
         </div>
 
-        <aside className="ai-panel">
-          <div className="ai-header"><div className="ai-orb">✦</div><div><span>AI 思考夥伴</span><small>隨時為你展開更多可能</small></div><span className="online">在線</span></div>
+        {mobileAiOpen && <button className="ai-backdrop" aria-label="關閉 AI 思考夥伴" onClick={() => setMobileAiOpen(false)} />}
+        <aside className={`ai-panel ${mobileAiOpen ? "mobile-open" : ""}`}>
+          <button className="ai-header" onClick={() => setMobileAiOpen((open) => !open)} aria-expanded={mobileAiOpen}><div className="ai-orb">✦</div><div><span>AI 思考夥伴</span><small>隨時為你展開更多可能</small></div><span className="online">在線</span><span className="sheet-handle" aria-hidden="true">⌃</span></button>
           <div className="ai-content">
             <p className="eyebrow">目前聚焦</p>
             <div className="focus-card"><span className={`focus-dot ${selected.tone}`} /><div><strong>{selected.text}</strong><p>{selected.note}</p></div></div>
-            <div className="suggestion-heading"><div><span className="spark">✦</span><strong>可以再往哪裡想？</strong></div><button data-testid="rotate-suggestions" onClick={() => { setSuggestionRound((round) => round + 1); flashToast("已換一組靈感"); }}>換一組 ↻</button></div>
+            <div className="suggestion-heading"><div><span className="spark">✦</span><strong>選擇想加入的靈感</strong></div><button data-testid="rotate-suggestions" onClick={() => { setSuggestionSelection(new Set()); setSuggestionRound((round) => round + 1); flashToast("已換一組靈感"); }}>換一組 ↻</button></div>
             <div className="suggestions" data-testid="ai-suggestions" aria-live="polite" key={`${selected.id}-${suggestionRound}`}>
-              {aiSuggestions.map((suggestion, index) => <button className="suggestion" key={suggestion.title} onClick={() => addNode(selected.id, suggestion.title, suggestion.note)}><span className="suggestion-number">0{index + 1}</span><div><strong>{suggestion.title}</strong><p>{suggestion.note}</p></div><span className="add-suggestion">＋</span></button>)}
+              {aiSuggestions.map((suggestion, index) => <button className={`suggestion ${suggestionSelection.has(suggestion.title) ? "selected" : ""}`} aria-pressed={suggestionSelection.has(suggestion.title)} key={suggestion.title} onClick={() => toggleSuggestion(suggestion.title)}><span className="suggestion-number">0{index + 1}</span><div><strong>{suggestion.title}</strong><p>{suggestion.note}</p></div><span className="add-suggestion">{suggestionSelection.has(suggestion.title) ? "✓" : "＋"}</span></button>)}
             </div>
+            <div className="suggestion-actions"><button onClick={() => setSuggestionSelection(new Set(aiSuggestions.map((item) => item.title)))}>全選</button><button className="primary" disabled={!suggestionSelection.size} onClick={() => setSuggestionPreviewOpen(true)}>預覽加入（{suggestionSelection.size}）</button></div>
             <div className="quick-row"><button onClick={() => setPrompt("把這個想法拆成三個具體步驟")}>拆解步驟</button><button onClick={() => setPrompt("找出我還沒想到的風險與盲點")}>找出盲點</button><button onClick={() => setPrompt("提供一個完全不同的觀點")}>換個角度</button></div>
           </div>
           <div className="prompt-box"><label htmlFor="ai-prompt">和 AI 一起想</label><div><textarea id="ai-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAI(); } }} placeholder={`例如：幫我延伸「${selected.text}」的具體做法…`} /><button onClick={askAI} aria-label="送出提示">↑</button></div><small>Enter 送出 · Shift + Enter 換行</small></div>
         </aside>
       </section>
+      {suggestionPreviewOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSuggestionPreviewOpen(false); }}><section className="suggestion-modal" role="dialog" aria-modal="true" aria-labelledby="suggestion-preview-title"><span className="modal-kicker">AI 建議預覽</span><h2 id="suggestion-preview-title">加入「{selected.text}」的子節點</h2><p>確認後會一次加入下列 {suggestionSelection.size} 個靈感，之後仍可復原。</p><div>{aiSuggestions.filter((item) => suggestionSelection.has(item.title)).map((item) => <article key={item.title}><strong>{item.title}</strong><span>{item.note}</span></article>)}</div><footer><button onClick={() => setSuggestionPreviewOpen(false)}>返回調整</button><button className="primary" onClick={addSelectedSuggestions}>確認加入</button></footer></section></div>}
       {toast && <div className="toast">✓ {toast}</div>}
     </main>
   );

@@ -38,6 +38,10 @@ test("server-renders the mind map studio", async () => {
   // Core tools expose accessible names.
   assert.match(html, /在目前節點下新增節點/);
   assert.match(html, /移除目前節點/);
+  assert.match(html, /搜尋節點/);
+  assert.match(html, /切換至大綱模式/);
+  assert.match(html, /適合畫面/);
+  assert.match(html, /預覽加入/);
 
   // The starter loading skeleton must be gone.
   assert.doesNotMatch(html, /Your site is taking shape/i);
@@ -59,6 +63,9 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   // The studio holds the interaction logic and is wired to the pure helpers.
   assert.match(studio, /^"use client";/);
   assert.match(studio, /from "\.\/lib\/mindmap"/);
+  assert.match(studio, /mobile-open/);
+  assert.match(studio, /結構化大綱/);
+  assert.match(studio, /addSelectedSuggestions/);
 
   assert.match(layout, /lang="zh-Hant"/);
   assert.match(layout, /title:\s*"靈感樹/);

@@ -55,12 +55,14 @@ export function loadDraft(): MapDraft | null {
   }
 }
 
-export function saveDraft(nodes: NodeItem[], selectedId: number): void {
-  if (typeof window === "undefined") return;
+export function saveDraft(nodes: NodeItem[], selectedId: number): boolean {
+  if (typeof window === "undefined") return false;
   try {
     window.localStorage.setItem(STORAGE_KEY, serializeDraft(nodes, selectedId));
+    return true;
   } catch {
     // Quota or privacy-mode failures should never break editing.
+    return false;
   }
 }
 
