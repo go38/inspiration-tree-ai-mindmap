@@ -20,6 +20,38 @@ export type HistoryState = {
 /** Newest history depth kept for undo/redo (HIS-04: at least 15 states). */
 export const HISTORY_LIMIT = 15;
 
+const TONES = new Set(["ink", "coral", "sage", "sun"]);
+
+/** Structural guard for a single persisted node (used by storage + shared maps). */
+export function isValidNode(value: unknown): value is NodeItem {
+  if (!value || typeof value !== "object") return false;
+  const node = value as Record<string, unknown>;
+  return (
+    typeof node.id === "number" &&
+    (node.parent === null || typeof node.parent === "number") &&
+    typeof node.text === "string" &&
+    typeof node.note === "string" &&
+    typeof node.x === "number" &&
+    typeof node.y === "number" &&
+    typeof node.tone === "string" &&
+    TONES.has(node.tone)
+  );
+}
+
+/**
+ * Validate an untrusted value as a mind map node array. Returns the typed
+ * array, or null if it is not a non-empty array with exactly one center node
+ * (parent === null) and every node structurally valid.
+ */
+export function parseNodes(value: unknown): NodeItem[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  if (!value.every(isValidNode)) return null;
+  const nodes = value as NodeItem[];
+  const roots = nodes.filter((node) => node.parent === null);
+  if (roots.length !== 1) return null;
+  return nodes;
+}
+
 /** Push a state onto a history stack, capping it at HISTORY_LIMIT entries. */
 export function pushHistory(history: HistoryState[], state: HistoryState): HistoryState[] {
   return [...history.slice(-(HISTORY_LIMIT - 1)), state];

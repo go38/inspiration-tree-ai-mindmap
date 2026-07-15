@@ -105,4 +105,17 @@ button { color:inherit; }
 @keyframes toast-in { from{opacity:0;transform:translate(-50%,8px)} }
 @media (max-width:1050px) { .workspace{grid-template-columns:60px minmax(450px,1fr) 320px}.ai-panel{font-size:90%}.brand small,.saved{display:none}.map-stage{left:44%} }
 @media (max-width:760px) { .app-shell{min-height:760px}.topbar{grid-template-columns:1fr auto}.document-title{display:none}.workspace{height:calc(100vh - 76px);grid-template-columns:52px 1fr}.toolrail{padding-inline:5px}.ai-panel{position:absolute;z-index:10;right:10px;bottom:10px;width:min(340px,calc(100vw - 82px));height:52%;border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 35px rgba(33,31,26,.18);overflow:hidden}.map-stage{left:50%;transform-origin:center}.canvas-hint{white-space:nowrap}.brand{font-size:17px}.share-button{padding:0 10px}.export-button{padding:0 10px}.export-menu{right:-48px} }
+/* Cloud sync status dot + conflict banner + shared-map notice view */
+.status-dot.saving { background:var(--sun); box-shadow:0 0 0 3px #f6eecd; }
+.status-dot.saved { background:var(--sage); box-shadow:0 0 0 3px #e7eee2; }
+.status-dot.conflict,.status-dot.error { background:var(--coral); box-shadow:0 0 0 3px #fbe3dd; }
+.conflict-banner { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; padding:10px 22px; background:#fbe3dd; border-bottom:1px solid #eeb9ad; color:#7a2f21; font-size:12px; }
+.conflict-actions { display:flex; gap:8px; }
+.conflict-actions button { height:32px; padding:0 12px; border:1px solid #d8a99d; border-radius:9px; background:var(--warm-white); color:#7a2f21; font-weight:650; font-size:11px; cursor:pointer; }
+.conflict-actions button.danger { background:var(--coral); border-color:var(--coral); color:white; }
+.notice-shell { display:grid; place-items:center; }
+.notice-card { max-width:420px; padding:32px; text-align:center; background:var(--warm-white); border:1px solid var(--line); border-radius:18px; box-shadow:0 14px 36px rgba(33,31,26,.12); }
+.notice-card h1 { margin:0 0 10px; font:700 20px var(--font-serif); }
+.notice-card p { margin:0 0 20px; color:var(--muted); font-size:13px; line-height:1.6; }
+.notice-card .share-button { display:inline-block; height:auto; padding:10px 18px; text-decoration:none; }
 @media (prefers-reduced-motion:reduce) { *{scroll-behavior:auto!important;transition:none!important;animation:none!important} }

@@ -95,10 +95,40 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 
 ## 常用指令
 
-- `npm run dev`: start local development
+- `npm run dev`: start local development（預設 http://localhost:3000）
 - `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
+- `npm test`: build then run every `tests/*.test.mjs` suite
 - `npm run db:generate`: generate Drizzle migrations after schema changes
+- `npm run db:migrate:local`: 套用 migration 到本機模擬的 D1（`.wrangler` 狀態）
+
+## 共享地圖 API（本機驗證）
+
+`mind_maps` 表存在真正的 D1；本機 `npm run dev` 用 miniflare 模擬綁定，但模擬的 D1
+一開始是空的，需先套用 migration：
+
+```bash
+npm run db:generate     # 首次或改 schema 後：產生 drizzle/*.sql
+npm run db:migrate:local # 套用到本機 D1（讀 .wrangler-local.jsonc，僅供本機）
+npm run dev
+```
+
+冒煙測試（換成 dev 實際埠號）：
+
+```bash
+# 建立 → 回傳 {id, version:1}
+curl -X POST localhost:3000/api/maps -H 'content-type: application/json' \
+  -d '{"title":"測試","nodes":[{"id":1,"parent":null,"text":"中心","note":"","x":0,"y":0,"tone":"ink"}]}'
+
+# 讀取（用上一步的 id）
+curl localhost:3000/api/maps/<id>
+
+# 樂觀鎖：先用 version:1 存回成功（→ version:2），再用 version:1 存回應得 409
+curl -X PUT localhost:3000/api/maps/<id> -H 'content-type: application/json' \
+  -d '{"title":"改","version":1,"nodes":[{"id":1,"parent":null,"text":"中心2","note":"","x":0,"y":0,"tone":"ink"}]}'
+```
+
+> `.wrangler-local.jsonc` 只在 `--config` 明確指定時使用，不影響 vite 內嵌的綁定設定與部署。
+> 部署到 Sites 時由平台套用 migration，不需這個檔案。
 
 ## Learn More
 

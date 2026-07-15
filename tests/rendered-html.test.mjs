@@ -45,14 +45,20 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, layout] = await Promise.all([
+  const [page, studio, layout] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   ]);
 
+  // The home page is a thin client wrapper around the shared studio.
   assert.match(page, /^"use client";/);
-  assert.match(page, /from "\.\/lib\/mindmap"/);
+  assert.match(page, /<MindMapStudio/);
   assert.doesNotMatch(page, /_sites-preview|SkeletonPreview|codex-preview/);
+
+  // The studio holds the interaction logic and is wired to the pure helpers.
+  assert.match(studio, /^"use client";/);
+  assert.match(studio, /from "\.\/lib\/mindmap"/);
 
   assert.match(layout, /lang="zh-Hant"/);
   assert.match(layout, /title:\s*"靈感樹/);

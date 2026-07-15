@@ -2,7 +2,7 @@
 // parseDraft / serializeDraft are pure and unit-tested; the load/save/clear
 // wrappers guard `window` so they are safe to import in a server render.
 
-import type { NodeItem } from "./mindmap";
+import { parseNodes, type NodeItem } from "./mindmap.ts";
 
 export const STORAGE_KEY = "inspiration-tree:draft:v1";
 
@@ -11,23 +11,6 @@ export type MapDraft = {
   nodes: NodeItem[];
   selectedId: number;
 };
-
-const TONES = new Set(["ink", "coral", "sage", "sun"]);
-
-function isValidNode(value: unknown): value is NodeItem {
-  if (!value || typeof value !== "object") return false;
-  const node = value as Record<string, unknown>;
-  return (
-    typeof node.id === "number" &&
-    (node.parent === null || typeof node.parent === "number") &&
-    typeof node.text === "string" &&
-    typeof node.note === "string" &&
-    typeof node.x === "number" &&
-    typeof node.y === "number" &&
-    typeof node.tone === "string" &&
-    TONES.has(node.tone)
-  );
-}
 
 /**
  * Validate and normalise a stored draft. Returns null for anything malformed
@@ -44,13 +27,12 @@ export function parseDraft(raw: string | null): MapDraft | null {
   }
   if (!data || typeof data !== "object") return null;
   const draft = data as Record<string, unknown>;
-  if (draft.version !== 1 || !Array.isArray(draft.nodes) || draft.nodes.length === 0) return null;
-  if (!draft.nodes.every(isValidNode)) return null;
+  if (draft.version !== 1) return null;
 
-  const nodes = draft.nodes as NodeItem[];
+  const nodes = parseNodes(draft.nodes);
+  if (!nodes) return null;
+
   const roots = nodes.filter((node) => node.parent === null);
-  if (roots.length !== 1) return null; // must keep the single-center invariant
-
   const selectedId =
     typeof draft.selectedId === "number" && nodes.some((node) => node.id === draft.selectedId)
       ? draft.selectedId
