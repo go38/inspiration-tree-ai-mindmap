@@ -13,7 +13,7 @@ import {
   type NodeItem,
 } from "./lib/mindmap";
 import { initialNodes } from "./lib/sampleMap";
-import { clearDraft, loadDraft, saveDraft } from "./lib/storage";
+import { clearDraft, loadDocumentTitle, loadDraft, saveDocumentTitle, saveDraft } from "./lib/storage";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -107,6 +107,9 @@ export default function MindMapStudio({
   const [sync, setSync] = useState<SyncState>("idle");
   const [conflict, setConflict] = useState<ServerMap | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [documentTitle, setDocumentTitle] = useState(persistence.mode === "cloud" ? persistence.title : "我的理想生活");
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("canvas");
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -175,7 +178,7 @@ export default function MindMapStudio({
       const response = await fetch(`/api/maps/${persistence.mapId}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: persistence.title, version: version.current, nodes }),
+        body: JSON.stringify({ title: documentTitle, version: version.current, nodes }),
       });
       if (response.status === 409) {
         const data = (await response.json()) as { current: ServerMap | null };
@@ -207,7 +210,7 @@ export default function MindMapStudio({
       if (persistence.mode === "cloud") {
         void saveToCloud();
       } else {
-        const saved = saveDraft(nodes, selectedId);
+        const saved = saveDraft(nodes, selectedId) && saveDocumentTitle(documentTitle);
         setPersisted(saved);
         setSync(saved ? "saved" : "error");
       }
@@ -216,7 +219,7 @@ export default function MindMapStudio({
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, selectedId]);
+  }, [documentTitle, nodes, selectedId]);
 
   // Local mode restores its draft once after mount (cloud data comes from the
   // server props, so there is nothing to restore there).
@@ -228,6 +231,8 @@ export default function MindMapStudio({
         setSelectedId(draft.selectedId);
         setPersisted(true);
       }
+      const savedTitle = loadDocumentTitle();
+      if (savedTitle) setDocumentTitle(savedTitle);
     }
     hydrated.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -251,7 +256,7 @@ export default function MindMapStudio({
       const response = await fetch("/api/maps", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: rootText, nodes }),
+        body: JSON.stringify({ title: documentTitle || rootText, nodes }),
       });
       if (!response.ok) {
         flashToast("建立失敗，請稍後再試", 2400);
@@ -396,6 +401,19 @@ export default function MindMapStudio({
     setZoom(nextZoom);
     setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
     flashToast("已將心智圖調整至畫面中央");
+  }
+
+  function beginTitleEdit() {
+    setTitleDraft(documentTitle);
+    setTitleEditing(true);
+  }
+
+  function saveTitleEdit() {
+    const nextTitle = titleDraft.trim().slice(0, 80);
+    if (!nextTitle) return;
+    setDocumentTitle(nextTitle);
+    setTitleEditing(false);
+    flashToast("標題已更新");
   }
 
   function undo() {
@@ -587,14 +605,13 @@ export default function MindMapStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId, nodes, selectedId]);
 
-  const documentTitle = persistence.mode === "cloud" ? persistence.title : "我的理想生活";
   const statusLabel = isCloud ? SYNC_LABEL[sync] : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
-        <div className="document-title"><span className={`status-dot ${isCloud ? sync : ""}`} />{documentTitle} <span className="saved">{statusLabel}</span></div>
+        <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} aria-label={`修改標題：${documentTitle}`}>{documentTitle}<span aria-hidden="true">✎</span></button>} <span className="saved">{statusLabel}</span></div>
         <div className="top-actions">
           <div className="export-wrap">
             <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>

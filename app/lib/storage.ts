@@ -5,6 +5,7 @@
 import { parseNodes, type NodeItem } from "./mindmap.ts";
 
 export const STORAGE_KEY = "inspiration-tree:draft:v1";
+export const TITLE_STORAGE_KEY = "inspiration-tree:title:v1";
 
 export type MapDraft = {
   version: 1;
@@ -66,10 +67,31 @@ export function saveDraft(nodes: NodeItem[], selectedId: number): boolean {
   }
 }
 
+export function loadDocumentTitle(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const title = window.localStorage.getItem(TITLE_STORAGE_KEY)?.trim();
+    return title ? title.slice(0, 80) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDocumentTitle(title: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    window.localStorage.setItem(TITLE_STORAGE_KEY, title.trim().slice(0, 80));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function clearDraft(): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(TITLE_STORAGE_KEY);
   } catch {
     // ignore
   }
