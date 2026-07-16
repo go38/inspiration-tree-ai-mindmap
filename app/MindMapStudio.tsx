@@ -16,6 +16,7 @@ import {
 } from "./lib/mindmap";
 import { initialNodes } from "./lib/sampleMap";
 import { clearDraft, loadDocumentTitle, loadDraft, saveDocumentTitle, saveDraft } from "./lib/storage";
+import { AI_MODE_LABELS, parseAiHistory, type AiHistory, type AiMode, type AiSuggestion, type AiTurn } from "./lib/ai";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -124,6 +125,14 @@ export default function MindMapStudio({
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(() => new Set());
   const [suggestionSelection, setSuggestionSelection] = useState<Set<string>>(() => new Set());
   const [suggestionPreviewOpen, setSuggestionPreviewOpen] = useState(false);
+  const [aiMode, setAiMode] = useState<AiMode>("diverge");
+  const [contextNodeIds, setContextNodeIds] = useState<Set<number>>(() => new Set());
+  const [generatedSuggestions, setGeneratedSuggestions] = useState<AiSuggestion[] | null>(null);
+  const [generatedForNodeId, setGeneratedForNodeId] = useState<number | null>(null);
+  const [aiSummary, setAiSummary] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiHistory, setAiHistory] = useState<AiHistory>({});
   const [stageOffset, setStageOffset] = useState({ x: 0, y: 0 });
   const [stagePan, setStagePan] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
@@ -133,11 +142,15 @@ export default function MindMapStudio({
   const panDrag = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
+  const aiHistoryHydrated = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const version = useRef(persistence.mode === "cloud" ? persistence.version : 1);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
-  const aiSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
+  const fallbackSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
+  const aiSuggestions: AiSuggestion[] = generatedForNodeId === selected.id && generatedSuggestions ? generatedSuggestions : fallbackSuggestions.map((item) => ({ ...item, sourceNodeIds: [selected.id] }));
+  const selectedHistory = aiHistory[selected.id] ?? [];
+  const aiHistoryStorageKey = `inspiration-tree:ai-history:${persistence.mode === "cloud" ? persistence.mapId : "local"}:v1`;
 
   const visibleNodes = useMemo(() => {
     const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -248,6 +261,25 @@ export default function MindMapStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    aiHistoryHydrated.current = false;
+    try {
+      setAiHistory(parseAiHistory(window.localStorage.getItem(aiHistoryStorageKey)));
+    } catch {
+      setAiHistory({});
+    }
+    queueMicrotask(() => { aiHistoryHydrated.current = true; });
+  }, [aiHistoryStorageKey]);
+
+  useEffect(() => {
+    if (!aiHistoryHydrated.current) return;
+    try {
+      window.localStorage.setItem(aiHistoryStorageKey, JSON.stringify(aiHistory));
+    } catch {
+      // Conversation history is optional and must never block map editing.
+    }
+  }, [aiHistory, aiHistoryStorageKey]);
+
   function resetToSample() {
     if (!window.confirm("確定要清除目前草稿並回到預設範例嗎？此動作可以復原。")) return;
     checkpoint();
@@ -357,6 +389,7 @@ export default function MindMapStudio({
     checkpoint();
     const removedIds = collectSubtreeIds(nodes, target.id);
     setNodes((items) => items.filter((node) => !removedIds.has(node.id)));
+    setAiHistory((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(Number(id)))) as AiHistory);
     setSelectedId(target.parent);
     flashToast(removedIds.size > 1 ? `已移除「${target.text}」及 ${removedIds.size - 1} 個子節點` : `已移除「${target.text}」`, 2200);
   }
@@ -377,6 +410,14 @@ export default function MindMapStudio({
     });
   }
 
+  function toggleContextNode(id: number) {
+    setContextNodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else if (next.size < 8) next.add(id);
+      return next;
+    });
+  }
+
   function addSelectedSuggestions() {
     const chosen = aiSuggestions.filter((item) => suggestionSelection.has(item.title));
     if (!chosen.length) return;
@@ -393,6 +434,11 @@ export default function MindMapStudio({
     }));
     setNodes((items) => [...items, ...created]);
     setSelectedId(created[0].id);
+    setAiHistory((current) => {
+      const turns = current[selected.id] ?? [];
+      if (!turns.length) return current;
+      return { ...current, [selected.id]: turns.map((turn, index) => index === turns.length - 1 ? { ...turn, adoptedTitles: [...new Set([...turn.adoptedTitles, ...chosen.map((item) => item.title)])] } : turn) };
+    });
     setSuggestionSelection(new Set());
     setSuggestionPreviewOpen(false);
     flashToast(`已加入 ${created.length} 個 AI 靈感`);
@@ -501,11 +547,34 @@ export default function MindMapStudio({
     setOutlineDropId(null);
   }
 
-  function askAI() {
-    const idea = prompt.trim();
-    if (!idea) return;
-    addNode(selected.id, idea, `AI 已依「${selected.text}」整理為可繼續發展的方向`);
-    setPrompt("");
+  async function askAI() {
+    if (aiLoading) return;
+    setAiLoading(true);
+    setAiError("");
+    setSuggestionSelection(new Set());
+    try {
+      const response = await fetch("/api/suggest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: aiMode, prompt: prompt.trim(), focusNodeId: selected.id, contextNodeIds: [...contextNodeIds], nodes }),
+      });
+      const data = await response.json() as { summary?: string; suggestions?: AiSuggestion[]; error?: string };
+      if (!response.ok || !data.summary || !data.suggestions) {
+        setAiError(data.error || "AI 暫時無法回應，請稍後再試。");
+        return;
+      }
+      setGeneratedSuggestions(data.suggestions);
+      setGeneratedForNodeId(selected.id);
+      setAiSummary(data.summary);
+      const turn: AiTurn = { id: crypto.randomUUID(), mode: aiMode, prompt: prompt.trim() || AI_MODE_LABELS[aiMode].description, summary: data.summary, suggestions: data.suggestions, adoptedTitles: [] };
+      setAiHistory((current) => ({ ...current, [selected.id]: [...(current[selected.id] ?? []), turn].slice(-12) }));
+      setPrompt("");
+      flashToast(`已產生 ${data.suggestions.length} 個 AI 建議`);
+    } catch {
+      setAiError("網路連線失敗，心智圖內容沒有被變更。請稍後重試。");
+    } finally {
+      setAiLoading(false);
+    }
   }
 
   function downloadFile(parts: BlobPart[], type: string, extension: string) {
@@ -782,14 +851,19 @@ export default function MindMapStudio({
           <div className="ai-content">
             <p className="eyebrow">目前聚焦</p>
             <div className="focus-card"><span className={`focus-dot ${selected.tone}`} /><div><strong>{selected.text}</strong><p>{selected.note}</p></div></div>
-            <div className="suggestion-heading"><div><span className="spark">✦</span><strong>選擇想加入的靈感</strong></div><button data-testid="rotate-suggestions" onClick={() => { setSuggestionSelection(new Set()); setSuggestionRound((round) => round + 1); flashToast("已換一組靈感"); }}>換一組 ↻</button></div>
+            <div className="ai-mode-switch" role="group" aria-label="AI 思考模式">{(Object.keys(AI_MODE_LABELS) as AiMode[]).map((mode) => <button key={mode} className={aiMode === mode ? "active" : ""} onClick={() => setAiMode(mode)} aria-pressed={aiMode === mode}><strong>{AI_MODE_LABELS[mode].label}</strong><span>{AI_MODE_LABELS[mode].description}</span></button>)}</div>
+            <details className="ai-context"><summary>多節點上下文 <span>{contextNodeIds.size || 1} 個節點</span></summary><p>最多選擇 8 個節點；未選取時使用目前焦點。</p><div>{nodes.map((node) => <label key={node.id}><input type="checkbox" checked={contextNodeIds.has(node.id)} onChange={() => toggleContextNode(node.id)} /><span><strong>{node.text}</strong><small>{node.note}</small></span></label>)}</div></details>
+            {selectedHistory.length > 0 && <details className="ai-history"><summary>過去討論 <span>{selectedHistory.length}</span></summary><div>{[...selectedHistory].reverse().map((turn) => <article key={turn.id}><small>{AI_MODE_LABELS[turn.mode].label} · {turn.adoptedTitles.length ? `已採用 ${turn.adoptedTitles.length} 項` : "尚未採用"}</small><strong>{turn.prompt}</strong><p>{turn.summary}</p><button onClick={() => { setGeneratedSuggestions(turn.suggestions); setGeneratedForNodeId(selected.id); setAiSummary(turn.summary); setSuggestionSelection(new Set()); }}>再次查看建議</button></article>)}</div></details>}
+            <div className="suggestion-heading"><div><span className="spark">✦</span><strong>選擇想加入的靈感</strong></div><button data-testid="rotate-suggestions" onClick={() => { setGeneratedSuggestions(null); setGeneratedForNodeId(null); setAiSummary(""); setAiError(""); setSuggestionSelection(new Set()); setSuggestionRound((round) => round + 1); flashToast("已換一組示範靈感"); }}>示範建議 ↻</button></div>
+            {generatedForNodeId === selected.id && aiSummary && <p className="ai-summary">{aiSummary}</p>}
+            {aiError && <div className="ai-error" role="alert"><span>{aiError}</span><button onClick={askAI}>重試</button></div>}
             <div className="suggestions" data-testid="ai-suggestions" aria-live="polite" key={`${selected.id}-${suggestionRound}`}>
-              {aiSuggestions.map((suggestion, index) => <button className={`suggestion ${suggestionSelection.has(suggestion.title) ? "selected" : ""}`} aria-pressed={suggestionSelection.has(suggestion.title)} key={suggestion.title} onClick={() => toggleSuggestion(suggestion.title)}><span className="suggestion-number">0{index + 1}</span><div><strong>{suggestion.title}</strong><p>{suggestion.note}</p></div><span className="add-suggestion">{suggestionSelection.has(suggestion.title) ? "✓" : "＋"}</span></button>)}
+              {aiSuggestions.map((suggestion, index) => <button className={`suggestion ${suggestionSelection.has(suggestion.title) ? "selected" : ""}`} aria-pressed={suggestionSelection.has(suggestion.title)} key={suggestion.title} onClick={() => toggleSuggestion(suggestion.title)}><span className="suggestion-number">0{index + 1}</span><div><strong>{suggestion.title}</strong><p>{suggestion.note}</p>{suggestion.sourceNodeIds.length > 1 && <small>來源：{suggestion.sourceNodeIds.map((id) => nodes.find((node) => node.id === id)?.text).filter(Boolean).join("、")}</small>}</div><span className="add-suggestion">{suggestionSelection.has(suggestion.title) ? "✓" : "＋"}</span></button>)}
             </div>
             <div className="suggestion-actions"><button onClick={() => setSuggestionSelection(new Set(aiSuggestions.map((item) => item.title)))}>全選</button><button className="primary" disabled={!suggestionSelection.size} onClick={() => setSuggestionPreviewOpen(true)}>預覽加入（{suggestionSelection.size}）</button></div>
             <div className="quick-row"><button onClick={() => setPrompt("把這個想法拆成三個具體步驟")}>拆解步驟</button><button onClick={() => setPrompt("找出我還沒想到的風險與盲點")}>找出盲點</button><button onClick={() => setPrompt("提供一個完全不同的觀點")}>換個角度</button></div>
           </div>
-          <div className="prompt-box"><label htmlFor="ai-prompt">和 AI 一起想</label><div><textarea id="ai-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAI(); } }} placeholder={`例如：幫我延伸「${selected.text}」的具體做法…`} /><button onClick={askAI} aria-label="送出提示">↑</button></div><small>Enter 送出 · Shift + Enter 換行</small></div>
+          <div className="prompt-box"><label htmlFor="ai-prompt">和 AI 一起想 · {AI_MODE_LABELS[aiMode].label}</label><div><textarea id="ai-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void askAI(); } }} placeholder={`可留白直接${AI_MODE_LABELS[aiMode].description}，或輸入你的問題…`} /><button onClick={() => void askAI()} aria-label="產生 AI 建議" disabled={aiLoading}>{aiLoading ? "…" : "↑"}</button></div><small>Enter 產生建議 · Shift + Enter 換行</small></div>
         </aside>
       </section>
       {suggestionPreviewOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSuggestionPreviewOpen(false); }}><section className="suggestion-modal" role="dialog" aria-modal="true" aria-labelledby="suggestion-preview-title"><span className="modal-kicker">AI 建議預覽</span><h2 id="suggestion-preview-title">加入「{selected.text}」的子節點</h2><p>確認後會一次加入下列 {suggestionSelection.size} 個靈感，之後仍可復原。</p><div>{aiSuggestions.filter((item) => suggestionSelection.has(item.title)).map((item) => <article key={item.title}><strong>{item.title}</strong><span>{item.note}</span></article>)}</div><footer><button onClick={() => setSuggestionPreviewOpen(false)}>返回調整</button><button className="primary" onClick={addSelectedSuggestions}>確認加入</button></footer></section></div>}

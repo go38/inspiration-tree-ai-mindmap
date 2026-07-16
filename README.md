@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供 AI 協作區協助拆解問題與探索更多方向。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.8.0`
+- 目前產品版本：`v0.9.0`
 - 產品需求文件：[PRD.md](./PRD.md)
 - 完整開發紀錄：[DEVELOPMENT.md](./DEVELOPMENT.md)
 - 版本紀錄：[CHANGELOG.md](./CHANGELOG.md)
