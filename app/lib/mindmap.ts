@@ -91,6 +91,38 @@ export function collectSubtreeIds(nodes: NodeItem[], rootId: number): Set<number
   return ids;
 }
 
+/** Move a node before another sibling while preserving every subtree. */
+export function reorderSiblingNodes(nodes: NodeItem[], sourceId: number, targetId: number): NodeItem[] {
+  if (sourceId === targetId) return nodes;
+  const source = nodes.find((node) => node.id === sourceId);
+  const target = nodes.find((node) => node.id === targetId);
+  if (!source || !target || source.parent === null || source.parent !== target.parent) return nodes;
+  const siblingSlots = nodes.flatMap((node, index) => node.parent === source.parent ? [index] : []);
+  const siblings = siblingSlots.map((index) => nodes[index]);
+  const sourceIndex = siblings.findIndex((node) => node.id === sourceId);
+  const targetIndex = siblings.findIndex((node) => node.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return nodes;
+  const reordered = [...siblings];
+  const [moved] = reordered.splice(sourceIndex, 1);
+  const insertionIndex = reordered.findIndex((node) => node.id === targetId);
+  reordered.splice(insertionIndex, 0, moved);
+  const next = [...nodes];
+  siblingSlots.forEach((slot, index) => { next[slot] = reordered[index]; });
+  return next;
+}
+
+/** Move a node one position among its siblings. */
+export function moveSiblingNode(nodes: NodeItem[], nodeId: number, delta: -1 | 1): NodeItem[] {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node || node.parent === null) return nodes;
+  const siblings = nodes.filter((item) => item.parent === node.parent);
+  const index = siblings.findIndex((item) => item.id === nodeId);
+  const targetIndex = index + delta;
+  if (index < 0 || targetIndex < 0 || targetIndex >= siblings.length) return nodes;
+  if (delta < 0) return reorderSiblingNodes(nodes, nodeId, siblings[targetIndex].id);
+  return reorderSiblingNodes(nodes, siblings[targetIndex].id, nodeId);
+}
+
 /** Filesystem-safe file name derived from a node title. */
 export function safeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "-").slice(0, 48) || "心智圖";

@@ -41,6 +41,7 @@ test("server-renders the mind map studio", async () => {
   assert.match(html, /搜尋節點/);
   assert.match(html, /切換至大綱模式/);
   assert.match(html, /適合畫面/);
+  assert.match(html, /拖曳空白處平移/);
   assert.match(html, /預覽加入/);
   assert.match(html, /修改標題：我的理想生活/);
 
@@ -66,6 +67,8 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /from "\.\/lib\/mindmap"/);
   assert.match(studio, /mobile-open/);
   assert.match(studio, /結構化大綱/);
+  assert.match(studio, /moveOutlineNode/);
+  assert.match(studio, /beginCanvasPan/);
   assert.match(studio, /addSelectedSuggestions/);
   assert.match(studio, /saveDocumentTitle/);
 

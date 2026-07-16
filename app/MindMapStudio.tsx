@@ -6,8 +6,10 @@ import {
   collectSubtreeIds,
   createCurvedRibbon,
   depthOf,
+  moveSiblingNode,
   nextNodeId,
   pushHistory,
+  reorderSiblingNodes,
   safeFilename,
   type HistoryState,
   type NodeItem,
@@ -120,7 +122,12 @@ export default function MindMapStudio({
   const [suggestionSelection, setSuggestionSelection] = useState<Set<string>>(() => new Set());
   const [suggestionPreviewOpen, setSuggestionPreviewOpen] = useState(false);
   const [stageOffset, setStageOffset] = useState({ x: 0, y: 0 });
-  const drag = useRef<{ id: number; ox: number; oy: number } | null>(null);
+  const [stagePan, setStagePan] = useState({ x: 0, y: 0 });
+  const [panning, setPanning] = useState(false);
+  const [outlineDragId, setOutlineDragId] = useState<number | null>(null);
+  const [outlineDropId, setOutlineDropId] = useState<number | null>(null);
+  const drag = useRef<{ id: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const panDrag = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
   const saveTimer = useRef<number | null>(null);
@@ -400,6 +407,7 @@ export default function MindMapStudio({
       : 100;
     setZoom(nextZoom);
     setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
+    setStagePan({ x: 0, y: 0 });
     flashToast("已將心智圖調整至畫面中央");
   }
 
@@ -437,11 +445,57 @@ export default function MindMapStudio({
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (panDrag.current) {
+      setStagePan({
+        x: panDrag.current.originX + event.clientX - panDrag.current.startX,
+        y: panDrag.current.originY + event.clientY - panDrag.current.startY,
+      });
+      return;
+    }
     if (!drag.current) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * (100 / zoom) - drag.current.ox;
-    const y = (event.clientY - rect.top) * (100 / zoom) - drag.current.oy;
+    const x = drag.current.originX + (event.clientX - drag.current.startX) * (100 / zoom);
+    const y = drag.current.originY + (event.clientY - drag.current.startY) * (100 / zoom);
     setNodes((items) => items.map((item) => item.id === drag.current?.id ? { ...item, x, y } : item));
+  }
+
+  function beginCanvasPan(event: React.PointerEvent<HTMLDivElement>) {
+    if (viewMode !== "canvas" || event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest(".mind-node, .canvas-commandbar, .zoom-control")) return;
+    panDrag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: stagePan.x, originY: stagePan.y };
+    setPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function endPointerInteraction(event: React.PointerEvent<HTMLDivElement>) {
+    drag.current = null;
+    if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null;
+    setPanning(false);
+  }
+
+  function moveOutlineNode(nodeId: number, delta: -1 | 1) {
+    const next = moveSiblingNode(nodes, nodeId, delta);
+    if (next === nodes) {
+      flashToast(delta < 0 ? "已是第一個同層節點" : "已是最後一個同層節點");
+      return;
+    }
+    checkpoint();
+    setNodes(next);
+    setSelectedId(nodeId);
+    flashToast(delta < 0 ? "節點已上移" : "節點已下移");
+  }
+
+  function dropOutlineNode(targetId: number) {
+    if (outlineDragId === null) return;
+    const next = reorderSiblingNodes(nodes, outlineDragId, targetId);
+    if (next !== nodes) {
+      checkpoint();
+      setNodes(next);
+      setSelectedId(outlineDragId);
+      flashToast("大綱順序已更新");
+    }
+    setOutlineDragId(null);
+    setOutlineDropId(null);
   }
 
   function askAI() {
@@ -666,15 +720,15 @@ export default function MindMapStudio({
           </>}
         </nav>
 
-        <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""}`} onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
+        <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${panning ? "panning" : ""}`} onPointerDown={beginCanvasPan} onPointerMove={onPointerMove} onPointerUp={endPointerInteraction} onPointerCancel={endPointerInteraction}>
           <div className="canvas-commandbar">
             <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => setViewMode("canvas")}>心智圖</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => setViewMode("outline")}>大綱</button></div>
             <label className="node-search"><span aria-hidden="true">⌕</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜尋節點" aria-label="搜尋節點" /></label>
             <button className="fit-button" onClick={fitToView}>適合畫面</button>
           </div>
           {viewMode === "canvas" ? <>
-          <div className="canvas-hint">拖曳整理 · 雙擊編輯 · Enter 同層 · Tab 子節點</div>
-          <div className="map-stage" style={{ transform: `translate(${stageOffset.x}px, ${stageOffset.y}px) scale(${zoom / 100})` }}>
+          <div className="canvas-hint">拖曳空白處平移 · 拖曳節點整理 · 雙擊編輯</div>
+          <div className="map-stage" style={{ transform: `translate(${stageOffset.x + stagePan.x}px, ${stageOffset.y + stagePan.y}px) scale(${zoom / 100})` }}>
             <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
               {connections.map((line) => <path key={line.id} className={`connection ${line.tone}`} d={line.path} />)}
             </svg>
@@ -686,7 +740,7 @@ export default function MindMapStudio({
                 key={node.id}
                 className={`mind-node ${node.tone} ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`}
                 style={{ left: node.x, top: node.y }}
-                onPointerDown={(event) => { if (editingId === node.id) return; checkpoint(); setSelectedId(node.id); const rect = event.currentTarget.getBoundingClientRect(); drag.current = { id: node.id, ox: (event.clientX - rect.left) * (100 / zoom), oy: (event.clientY - rect.top) * (100 / zoom) }; event.currentTarget.setPointerCapture(event.pointerId); }}
+                onPointerDown={(event) => { if (editingId === node.id) return; event.stopPropagation(); checkpoint(); setSelectedId(node.id); drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y }; event.currentTarget.setPointerCapture(event.pointerId); }}
                 onDoubleClick={() => beginEdit(node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div><h3>{node.text}</h3><p>{node.note}</p></div>}
@@ -695,13 +749,26 @@ export default function MindMapStudio({
             );})}
           </div>
           <div className="zoom-control"><button onClick={() => setZoom(Math.max(70, zoom - 10))} aria-label="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(130, zoom + 10))} aria-label="放大">＋</button><button onClick={fitToView} aria-label="適合畫面">◎</button></div>
-          </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>點選節點後可直接編輯或新增子節點</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
+          </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>拖曳同層項目排序；手機可使用上移／下移</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
             const hasChildren = nodes.some((item) => item.parent === node.id);
             const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
-            return <div className={`outline-row ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`} style={{ paddingLeft: 18 + depth * 28 }} key={node.id}>
+            const siblings = nodes.filter((item) => item.parent === node.parent);
+            const siblingIndex = siblings.findIndex((item) => item.id === node.id);
+            const draggable = node.parent !== null && editingId !== node.id;
+            return <div
+              className={`outline-row ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""} ${outlineDragId === node.id ? "dragging" : ""} ${outlineDropId === node.id ? "drop-target" : ""}`}
+              style={{ paddingLeft: 18 + depth * 28 }}
+              key={node.id}
+              draggable={draggable}
+              onDragStart={(event) => { if (!draggable) return; setOutlineDragId(node.id); event.dataTransfer.effectAllowed = "move"; }}
+              onDragOver={(event) => { const source = nodes.find((item) => item.id === outlineDragId); if (source && source.parent === node.parent && source.id !== node.id) { event.preventDefault(); setOutlineDropId(node.id); } }}
+              onDrop={(event) => { event.preventDefault(); dropOutlineNode(node.id); }}
+              onDragEnd={() => { setOutlineDragId(null); setOutlineDropId(null); }}
+            >
+              <span className="outline-drag-handle" title={draggable ? "拖曳調整同層順序" : undefined} aria-hidden="true">⋮⋮</span>
               <button className="outline-collapse" onClick={() => hasChildren && toggleCollapsed(node.id)} aria-label={hasChildren ? `${collapsedIds.has(node.id) ? "展開" : "收合"}${node.text}` : undefined} disabled={!hasChildren}>{hasChildren ? collapsedIds.has(node.id) ? "▸" : "▾" : "·"}</button>
               {editingId === node.id ? <div className="outline-editor"><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} aria-label="節點說明" /><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></div> : <button className="outline-copy" onClick={() => setSelectedId(node.id)} onDoubleClick={() => beginEdit(node)}><strong>{node.text}</strong><span>{node.note || "尚未加入說明"}</span></button>}
-              {editingId !== node.id && <div className="outline-actions"><button onClick={() => beginEdit(node)}>編輯</button><button onClick={() => addNode(node.id)}>＋ 子節點</button></div>}
+              {editingId !== node.id && <div className="outline-actions"><button onClick={() => beginEdit(node)}>編輯</button><button className="add-child-button" onClick={() => addNode(node.id)}>＋ 子節點</button><button className="reorder-button" onClick={() => moveOutlineNode(node.id, -1)} disabled={node.parent === null || siblingIndex <= 0} aria-label={`將${node.text}上移`}>↑</button><button className="reorder-button" onClick={() => moveOutlineNode(node.id, 1)} disabled={node.parent === null || siblingIndex === siblings.length - 1} aria-label={`將${node.text}下移`}>↓</button></div>}
             </div>;
           })}</div></div>}
         </div>

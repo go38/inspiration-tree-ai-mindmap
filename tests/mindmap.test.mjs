@@ -9,7 +9,9 @@ import {
   collectSubtreeIds,
   depthOf,
   nextNodeId,
+  moveSiblingNode,
   pushHistory,
+  reorderSiblingNodes,
   safeFilename,
 } from "../app/lib/mindmap.ts";
 
@@ -44,6 +46,18 @@ test("collectSubtreeIds gathers a node and all descendants", () => {
   assert.deepEqual([...collectSubtreeIds(nodes, 1)].sort((a, b) => a - b), [1, 2, 3, 4]);
   // A leaf gathers only itself.
   assert.deepEqual([...collectSubtreeIds(nodes, 4)], [4]);
+});
+
+test("sibling ordering moves only nodes with the same parent", () => {
+  const nodes = sampleNodes();
+  const beforeB = reorderSiblingNodes(nodes, 4, 2);
+  assert.deepEqual(beforeB.filter((node) => node.parent === 1).map((node) => node.id), [4, 2]);
+  assert.equal(beforeB.find((node) => node.id === 3).parent, 2);
+
+  const down = moveSiblingNode(beforeB, 4, 1);
+  assert.deepEqual(down.filter((node) => node.parent === 1).map((node) => node.id), [2, 4]);
+  assert.equal(moveSiblingNode(down, 4, 1), down); // already last
+  assert.equal(reorderSiblingNodes(nodes, 3, 4), nodes); // different parents
 });
 
 test("safeFilename strips illegal characters and caps length", () => {
