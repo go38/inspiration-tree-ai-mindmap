@@ -32,8 +32,9 @@ export async function POST(request: Request) {
   const parsed = parseAiSuggestRequest(body);
   if (!parsed) return Response.json({ error: "AI 請求格式不正確，請重新選取節點後再試。" }, { status: 400 });
 
-  const runtime = env as unknown as Record<string, string | undefined>;
-  const apiKey = runtime.OPENAI_API_KEY;
+  const workerEnv = env as unknown as Record<string, string | undefined>;
+  const nodeEnv = typeof process !== "undefined" ? process.env : {};
+  const apiKey = workerEnv.OPENAI_API_KEY || nodeEnv.OPENAI_API_KEY;
   if (!apiKey) return Response.json({ error: "AI 尚未啟用，管理者需先設定 OpenAI API 金鑰。", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
   const controller = new AbortController();
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
-        model: runtime.OPENAI_MODEL || "gpt-5.6-luna",
+        model: workerEnv.OPENAI_MODEL || nodeEnv.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: "你是協助使用者整理心智圖的思考夥伴。輸出必須安全、具體、彼此不重複，不得捏造使用者未提供的事實。",
         input: buildAiInput(parsed),
         reasoning: { effort: "low" },
