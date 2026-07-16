@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAiInput, parseAiHistory, parseAiResponse, parseAiSuggestRequest } from "../app/lib/ai.ts";
+import { buildAiInput, extractAiResponseText, parseAiHistory, parseAiResponse, parseAiSuggestRequest } from "../app/lib/ai.ts";
 
 const nodes = [
   { id: 1, parent: null, text: "理想生活", note: "中心", x: 0, y: 0, tone: "ink" },
@@ -27,6 +27,13 @@ test("AI response parser rejects malformed output and unknown source ids", () =>
   const result = parseAiResponse({ summary: "整理結果", suggestions: [{ title: "固定睡眠時間", note: "每天同一時間上床", sourceNodeIds: [2, 99] }] }, new Set([1, 2]));
   assert.deepEqual(result.suggestions[0].sourceNodeIds, [2]);
   assert.equal(parseAiResponse({ summary: "", suggestions: [] }, new Set([1])), null);
+});
+
+test("AI response text extractor supports raw Responses API output", () => {
+  const structured = '{"summary":"整理結果","suggestions":[]}';
+  assert.equal(extractAiResponseText({ output_text: structured }), structured);
+  assert.equal(extractAiResponseText({ output: [{ type: "reasoning", content: [] }, { type: "message", content: [{ type: "output_text", text: structured }] }] }), structured);
+  assert.equal(extractAiResponseText({ output: [{ type: "message", content: [{ type: "refusal", refusal: "無法回答" }] }] }), null);
 });
 
 test("AI history is restored per node and malformed records are ignored", () => {

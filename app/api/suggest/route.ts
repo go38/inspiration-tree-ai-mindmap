@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { buildAiInput, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
+import { buildAiInput, extractAiResponseText, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
 
 export const dynamic = "force-dynamic";
 
@@ -58,8 +58,9 @@ export async function POST(request: Request) {
       const message = response.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : response.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 服務暫時無法回應，請稍後重試。";
       return Response.json({ error: message }, { status });
     }
-    const result = await response.json() as { output_text?: string };
-    const json = result.output_text ? JSON.parse(result.output_text) : null;
+    const result = await response.json() as unknown;
+    const outputText = extractAiResponseText(result);
+    const json = outputText ? JSON.parse(outputText) : null;
     const validated = parseAiResponse(json, new Set(parsed.nodes.map((node) => node.id)));
     if (!validated) return Response.json({ error: "AI 回覆格式不完整，請再試一次。" }, { status: 502 });
     return Response.json(validated);

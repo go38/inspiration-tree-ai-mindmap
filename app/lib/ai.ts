@@ -33,6 +33,26 @@ export const AI_MODE_LABELS: Record<AiMode, { label: string; description: string
   challenge: { label: "質疑", description: "找出假設、風險與盲點" },
 };
 
+export function extractAiResponseText(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const response = value as Record<string, unknown>;
+  if (typeof response.output_text === "string" && response.output_text.trim()) return response.output_text.trim();
+  if (!Array.isArray(response.output)) return null;
+
+  const text = response.output.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const content = (item as Record<string, unknown>).content;
+    if (!Array.isArray(content)) return [];
+    return content.flatMap((part) => {
+      if (!part || typeof part !== "object") return [];
+      const output = part as Record<string, unknown>;
+      return output.type === "output_text" && typeof output.text === "string" && output.text.trim() ? [output.text.trim()] : [];
+    });
+  }).join("\n");
+
+  return text || null;
+}
+
 export function parseAiSuggestRequest(value: unknown): AiSuggestRequest | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
