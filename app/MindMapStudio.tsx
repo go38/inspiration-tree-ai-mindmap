@@ -77,6 +77,9 @@ type ServerMap = {
 type SyncState = "idle" | "saving" | "saved" | "conflict" | "error";
 type ViewMode = "canvas" | "outline";
 
+const MIN_ZOOM = 50;
+const MAX_ZOOM = 200;
+
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "雲端共享",
   saving: "儲存中…",
@@ -403,7 +406,7 @@ export default function MindMapStudio({
     const minY = Math.min(...visibleNodes.map((node) => node.y));
     const maxY = Math.max(...visibleNodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
     const nextZoom = rect
-      ? Math.round(Math.max(70, Math.min(130, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
+      ? Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
       : 100;
     setZoom(nextZoom);
     setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
@@ -695,27 +698,27 @@ export default function MindMapStudio({
 
       <section className="workspace">
         <nav className="toolrail" aria-label="心智圖工具">
-          <button className="tool" onClick={() => addNode()} aria-label="在目前節點下新增節點">
-            <span aria-hidden="true">＋</span><small>新增</small>
+          <button className="tool" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點">
+            <span aria-hidden="true">＋</span>
           </button>
-          <button className="tool danger" onClick={removeSelectedNode} aria-label="移除目前節點" disabled={selected.parent === null}>
-            <span aria-hidden="true">−</span><small>移除</small>
-          </button>
-          <span className="tool-divider" aria-hidden="true" />
-          <button className="tool" onClick={undo} aria-label="復原上一步" disabled={!history.length}>
-            <span aria-hidden="true">↶</span><small>復原</small>
-          </button>
-          <button className="tool" onClick={redo} aria-label="重做上一步" disabled={!future.length}>
-            <span aria-hidden="true">↷</span><small>重做</small>
+          <button className="tool danger" onClick={removeSelectedNode} aria-label="移除目前節點" data-tooltip="移除節點" disabled={selected.parent === null}>
+            <span aria-hidden="true">−</span>
           </button>
           <span className="tool-divider" aria-hidden="true" />
-          <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => setViewMode((mode) => mode === "canvas" ? "outline" : "canvas")} aria-label={viewMode === "canvas" ? "切換至大綱模式" : "切換至心智圖模式"}>
-            <span aria-hidden="true">≡</span><small>{viewMode === "canvas" ? "大綱" : "畫布"}</small>
+          <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原上一步" disabled={!history.length}>
+            <span aria-hidden="true">↶</span>
+          </button>
+          <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做上一步" disabled={!future.length}>
+            <span aria-hidden="true">↷</span>
+          </button>
+          <span className="tool-divider" aria-hidden="true" />
+          <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => setViewMode((mode) => mode === "canvas" ? "outline" : "canvas")} aria-label={viewMode === "canvas" ? "切換至大綱模式" : "切換至心智圖模式"} data-tooltip={viewMode === "canvas" ? "切換至大綱" : "切換至畫布"}>
+            <span aria-hidden="true">≡</span>
           </button>
           {!isCloud && <>
             <span className="tool-divider" aria-hidden="true" />
-            <button className="tool" onClick={resetToSample} aria-label="清除草稿並重設為預設範例">
-              <span aria-hidden="true">⟳</span><small>重設</small>
+            <button className="tool" onClick={resetToSample} aria-label="清除草稿並重設為預設範例" data-tooltip="重設範例">
+              <span aria-hidden="true">⟳</span>
             </button>
           </>}
         </nav>
@@ -748,7 +751,7 @@ export default function MindMapStudio({
               </article>
             );})}
           </div>
-          <div className="zoom-control"><button onClick={() => setZoom(Math.max(70, zoom - 10))} aria-label="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(130, zoom + 10))} aria-label="放大">＋</button><button onClick={fitToView} aria-label="適合畫面">◎</button></div>
+          <div className="zoom-control"><button onClick={() => setZoom(Math.max(MIN_ZOOM, zoom - 10))} aria-label="縮小，最低 50%" title="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + 10))} aria-label="放大，最高 200%" title="放大">＋</button><button onClick={fitToView} aria-label="適合畫面" title="適合畫面">◎</button></div>
           </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>拖曳同層項目排序；手機可使用上移／下移</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
             const hasChildren = nodes.some((item) => item.parent === node.id);
             const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);

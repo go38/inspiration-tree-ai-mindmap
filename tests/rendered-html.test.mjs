@@ -69,6 +69,10 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /結構化大綱/);
   assert.match(studio, /moveOutlineNode/);
   assert.match(studio, /beginCanvasPan/);
+  assert.match(studio, /const MIN_ZOOM = 50/);
+  assert.match(studio, /const MAX_ZOOM = 200/);
+  assert.match(studio, /data-tooltip="新增節點"/);
+  assert.doesNotMatch(studio, /<span aria-hidden="true">＋<\/span><small>新增<\/small>/);
   assert.match(studio, /addSelectedSuggestions/);
   assert.match(studio, /saveDocumentTitle/);
 
