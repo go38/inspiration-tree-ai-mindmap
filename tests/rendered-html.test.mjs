@@ -29,7 +29,7 @@ test("server-renders the mind map studio", async () => {
 
   // Brand + workspace chrome from app/page.tsx.
   assert.match(html, /AI MIND STUDIO/);
-  assert.match(html, /AI 思考夥伴/);
+  assert.match(html, /一起想想/);
 
   // Initial mind map content is prerendered (center + a first-level branch).
   assert.match(html, /打造理想生活/);
@@ -42,7 +42,7 @@ test("server-renders the mind map studio", async () => {
   assert.match(html, /切換至大綱模式/);
   assert.match(html, /適合畫面/);
   assert.match(html, /拖曳空白處平移/);
-  assert.match(html, /預覽加入/);
+  assert.match(html, /你卡在哪裡？/);
   assert.match(html, /修改標題：我的理想生活/);
 
   // The starter loading skeleton must be gone.
@@ -73,7 +73,8 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /const MAX_ZOOM = 200/);
   assert.match(studio, /data-tooltip="新增節點"/);
   assert.doesNotMatch(studio, /<span aria-hidden="true">＋<\/span><small>新增<\/small>/);
-  assert.match(studio, /addSelectedSuggestions/);
+  assert.match(studio, /addAiSuggestion/);
+  assert.doesNotMatch(studio, /AI_MODE_LABELS|多節點上下文|過去討論|預覽加入/);
   assert.match(studio, /saveDocumentTitle/);
 
   assert.match(layout, /lang="zh-Hant"/);
