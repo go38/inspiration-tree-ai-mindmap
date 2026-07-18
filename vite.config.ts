@@ -8,6 +8,14 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
+// Direct Cloudflare deploys (outside the Sites platform) provide the real D1
+// database through these env vars so the generated wrangler.json binds to it.
+// When unset (local dev + Sites hosting), the placeholder id is kept and the
+// platform injects the real binding at runtime, so behaviour is unchanged.
+const cfDatabaseId =
+  process.env.CF_D1_DATABASE_ID || SITE_CREATOR_PLACEHOLDER_DATABASE_ID;
+const cfDatabaseName = process.env.CF_D1_DATABASE_NAME || "site-creator-d1";
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
@@ -18,8 +26,8 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: cfDatabaseName,
+          database_id: cfDatabaseId,
         },
       ]
     : [],

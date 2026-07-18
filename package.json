@@ -12,7 +12,12 @@
     "test": "npm run build && node --import ./tests/setup.mjs --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply site-creator-d1 --local --config .wrangler-local.jsonc"
+    "db:migrate:local": "wrangler d1 migrations apply site-creator-d1 --local --config .wrangler-local.jsonc",
+    "cf:d1:create": "wrangler d1 create ${CF_D1_DATABASE_NAME:-inspiration-tree-ai-mindmap}",
+    "cf:config": "node scripts/cf-remote-config.mjs",
+    "cf:d1:migrate": "npm run cf:config && wrangler d1 migrations apply ${CF_D1_DATABASE_NAME:-inspiration-tree-ai-mindmap} --remote --config .wrangler-remote.jsonc",
+    "cf:secret": "wrangler secret put OPENAI_API_KEY --name ${CF_WORKER_NAME:-inspiration-tree-ai-mindmap}",
+    "cf:deploy": "npm run build && wrangler deploy --name ${CF_WORKER_NAME:-inspiration-tree-ai-mindmap}"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
