@@ -3,8 +3,10 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供 AI 協作區協助拆解問題與探索更多方向。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.9.0`
+- 目前產品版本：`v0.10.0`
+- 存取狀態：私人 Beta（僅限擁有者）
 - 產品需求文件：[PRD.md](./PRD.md)
+- 開發路線圖：[ROADMAP.md](./ROADMAP.md)
 - 完整開發紀錄：[DEVELOPMENT.md](./DEVELOPMENT.md)
 - 版本紀錄：[CHANGELOG.md](./CHANGELOG.md)
 - 版本管理規範：[VERSIONING.md](./VERSIONING.md)
@@ -27,7 +29,8 @@ This starter does not use `wrangler.jsonc`.
 
 ## 專案結構
 
-- `app/page.tsx`：心智圖與 AI 協作互動
+- `app/page.tsx`：首頁與本機草稿入口
+- `app/MindMapStudio.tsx`：心智圖與 AI 協作互動
 - `app/globals.css`：網站視覺與響應式版面
 - `app/layout.tsx`：網站中繼資料與語言設定
 - `app/lib/mindmap.ts`：心智圖純函式（節點/歷史/匯出邏輯），與 UI 解耦以利單元測試
