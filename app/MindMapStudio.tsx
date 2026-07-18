@@ -133,7 +133,7 @@ export default function MindMapStudio({
   const [panning, setPanning] = useState(false);
   const [outlineDragId, setOutlineDragId] = useState<number | null>(null);
   const [outlineDropId, setOutlineDropId] = useState<number | null>(null);
-  const drag = useRef<{ id: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const drag = useRef<{ id: number; startX: number; startY: number; originX: number; originY: number; moved: boolean; before: HistoryState } | null>(null);
   const panDrag = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
@@ -450,6 +450,10 @@ export default function MindMapStudio({
     if (!drag.current) return;
     const x = drag.current.originX + (event.clientX - drag.current.startX) * (100 / zoom);
     const y = drag.current.originY + (event.clientY - drag.current.startY) * (100 / zoom);
+    // Ignore pure clicks/selection: only touch nodes + history once the position
+    // actually changes, so plain selection never produces an undo checkpoint.
+    if (x === drag.current.originX && y === drag.current.originY) return;
+    drag.current.moved = true;
     setNodes((items) => items.map((item) => item.id === drag.current?.id ? { ...item, x, y } : item));
   }
 
@@ -463,6 +467,13 @@ export default function MindMapStudio({
   }
 
   function endPointerInteraction(event: React.PointerEvent<HTMLDivElement>) {
+    const active = drag.current;
+    // Record a single checkpoint on release, holding the pre-drag snapshot, but
+    // only when the node was actually moved (not merely selected).
+    if (active?.moved) {
+      setHistory((items) => pushHistory(items, active.before));
+      setFuture([]);
+    }
     drag.current = null;
     if (panDrag.current?.pointerId === event.pointerId) panDrag.current = null;
     setPanning(false);
@@ -755,7 +766,7 @@ export default function MindMapStudio({
                 key={node.id}
                 className={`mind-node ${node.tone} ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`}
                 style={{ left: node.x, top: node.y }}
-                onPointerDown={(event) => { if (editingId === node.id) return; event.stopPropagation(); checkpoint(); setSelectedId(node.id); drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y }; event.currentTarget.setPointerCapture(event.pointerId); }}
+                onPointerDown={(event) => { if (editingId === node.id) return; event.stopPropagation(); drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y, moved: false, before: { nodes, selectedId } }; setSelectedId(node.id); event.currentTarget.setPointerCapture(event.pointerId); }}
                 onDoubleClick={() => beginEdit(node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div><h3>{node.text}</h3><p>{node.note}</p></div>}

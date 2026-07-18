@@ -77,6 +77,12 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.doesNotMatch(studio, /AI_MODE_LABELS|多節點上下文|過去討論|預覽加入/);
   assert.match(studio, /saveDocumentTitle/);
 
+  // Drag history precision (P0): starting a drag captures a pre-drag snapshot
+  // and defers the checkpoint; a plain node press no longer checkpoints on down.
+  assert.match(studio, /moved: false, before: \{ nodes, selectedId \}/);
+  assert.match(studio, /if \(active\?\.moved\)/);
+  assert.doesNotMatch(studio, /stopPropagation\(\); checkpoint\(\); setSelectedId/);
+
   assert.match(layout, /lang="zh-Hant"/);
   assert.match(layout, /title:\s*"靈感樹/);
 });
