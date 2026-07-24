@@ -7,8 +7,10 @@ import {
   buildMarkdownLines,
   collectSubtreeIds,
   createCurvedRibbon,
+  createTreeBranchRibbons,
   depthOf,
   historyShortcutForKey,
+  layoutTreeViewNodes,
   moveSiblingNode,
   nextNodeId,
   nodeBounds,
@@ -89,7 +91,7 @@ type ServerMap = {
 };
 
 type SyncState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
-type ViewMode = "canvas" | "outline";
+type ViewMode = "canvas" | "tree" | "outline";
 
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
@@ -162,9 +164,11 @@ export default function MindMapStudio({
   const syncQueued = useRef(false);
   const needsCloudSync = useRef(false);
   const skipNextAutosave = useRef(false);
-  nodesRef.current = nodes;
-  selectedIdRef.current = selectedId;
-  documentTitleRef.current = documentTitle;
+  useEffect(() => {
+    nodesRef.current = nodes;
+    selectedIdRef.current = selectedId;
+    documentTitleRef.current = documentTitle;
+  }, [documentTitle, nodes, selectedId]);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const fallbackSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
@@ -182,6 +186,8 @@ export default function MindMapStudio({
     });
   }, [collapsedIds, nodes]);
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
+  const treeNodes = useMemo(() => layoutTreeViewNodes(visibleNodes), [visibleNodes]);
+  const displayNodes = viewMode === "tree" ? treeNodes : visibleNodes;
   const outlineNodes = useMemo(() => {
     const ordered: { node: NodeItem; depth: number }[] = [];
     const root = nodes.find((node) => node.parent === null);
@@ -196,16 +202,30 @@ export default function MindMapStudio({
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase("zh-TW");
 
   const connections = useMemo(() => {
-    const byId = new Map(nodes.map((node) => [node.id, node]));
-    return visibleNodes.flatMap((node) => {
+    if (viewMode === "tree") {
+      return createTreeBranchRibbons(displayNodes).map((ribbon) => ({
+        id: ribbon.id,
+        path: ribbon.path,
+        tone: ribbon.tone,
+        kind: ribbon.kind,
+      }));
+    }
+    const byId = new Map(displayNodes.map((node) => [node.id, node]));
+    return displayNodes.flatMap((node) => {
       const parent = node.parent === null ? undefined : byId.get(node.parent);
       if (!parent || !visibleNodeIds.has(parent.id)) return [];
-      const x1 = parent.x + 90, y1 = parent.y + 35, x2 = node.x + 90, y2 = node.y + 35;
-      const thickness = Math.max(4, 10 - (depthOf(nodes, node) - 1) * 3);
+      const parentBox = nodeBounds(parent);
+      const nodeBox = nodeBounds(node);
+      const x1 = parent.x + parentBox.width / 2;
+      const y1 = viewMode === "tree" ? parent.y : parent.y + parentBox.height / 2;
+      const x2 = node.x + nodeBox.width / 2;
+      const y2 = viewMode === "tree" ? node.y + nodeBox.height : node.y + nodeBox.height / 2;
+      const depth = depthOf(nodes, node);
+      const thickness = Math.max(4, 10 - (depth - 1) * 3);
       const curve = createCurvedRibbon(x1, y1, x2, y2, thickness, Math.max(1.2, thickness * .12), parent.id + node.id);
-      return [{ id: `${parent.id}-${node.id}`, path: curve.path, tone: node.tone }];
+      return [{ id: `${parent.id}-${node.id}`, path: curve.path, tone: node.tone, kind: "branch" as const }];
     });
-  }, [nodes, visibleNodeIds, visibleNodes]);
+  }, [displayNodes, nodes, viewMode, visibleNodeIds]);
 
   function flashToast(message: string, ms = 1800) {
     setToast(message);
@@ -529,7 +549,7 @@ export default function MindMapStudio({
     flashToast(`已加入「${suggestion.title}」`);
   }
 
-  function fitNodesToView(items: NodeItem[], message = "已將心智圖調整至畫面中央") {
+  function fitNodesToView(items: NodeItem[], message = "已將心智圖調整至畫面中央", maximumZoom = MAX_ZOOM) {
     if (!items.length) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     const bounds = items.map(nodeBounds);
@@ -538,7 +558,7 @@ export default function MindMapStudio({
     const minY = Math.min(...bounds.map((box) => box.y));
     const maxY = Math.max(...bounds.map((box) => box.y + box.height));
     const nextZoom = rect
-      ? Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
+      ? Math.round(Math.max(MIN_ZOOM, Math.min(maximumZoom, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
       : 100;
     setZoom(nextZoom);
     setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
@@ -547,10 +567,22 @@ export default function MindMapStudio({
   }
 
   function fitToView() {
-    fitNodesToView(visibleNodes);
+    fitNodesToView(displayNodes, viewMode === "tree" ? "已將整棵靈感樹調整至畫面中央" : undefined, viewMode === "tree" ? 110 : MAX_ZOOM);
+  }
+
+  function selectViewMode(mode: ViewMode) {
+    setViewMode(mode);
+    if (mode === "outline") return;
+    window.requestAnimationFrame(() => {
+      fitNodesToView(mode === "tree" ? treeNodes : visibleNodes, mode === "tree" ? "已切換至樹狀檢視" : "已切換至心智圖檢視", mode === "tree" ? 110 : MAX_ZOOM);
+    });
   }
 
   function applyAutoLayout(branchRootId?: number) {
+    if (viewMode === "tree") {
+      fitNodesToView(treeNodes, branchRootId === undefined ? "樹冠已依層級自動整理" : "分枝已依層級展開", 110);
+      return;
+    }
     const next = autoLayoutNodes(nodes, branchRootId);
     if (next === nodes) {
       flashToast("目前布局已經很整齊");
@@ -619,7 +651,7 @@ export default function MindMapStudio({
   }
 
   function beginCanvasPan(event: React.PointerEvent<HTMLDivElement>) {
-    if (viewMode !== "canvas" || event.button !== 0) return;
+    if (viewMode === "outline" || event.button !== 0) return;
     const target = event.target as HTMLElement;
     if (target.closest(".mind-node, .canvas-commandbar, .zoom-control")) return;
     panDrag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: stagePan.x, originY: stagePan.y };
@@ -746,32 +778,49 @@ export default function MindMapStudio({
       if (!ctx) throw new Error("Canvas unavailable");
       ctx.fillStyle = "#f7f3ea"; ctx.fillRect(0, 0, width, height);
       ctx.fillStyle = "#211f1a"; ctx.fillRect(0, 0, width, 110);
-      ctx.fillStyle = "#fffcf6"; ctx.font = "600 36px sans-serif"; ctx.fillText("靈感樹 · 心智圖", 58, 68);
+      const exportNodes = viewMode === "tree" ? treeNodes : nodes;
+      ctx.fillStyle = "#fffcf6"; ctx.font = "600 36px sans-serif"; ctx.fillText(viewMode === "tree" ? "靈感樹 · 樹狀檢視" : "靈感樹 · 心智圖", 58, 68);
       ctx.fillStyle = "#cfc9bd"; ctx.font = "20px sans-serif"; ctx.fillText(new Date().toLocaleDateString("zh-TW"), 1450, 66);
-      const minX = Math.min(...nodes.map((node) => node.x));
-      const maxX = Math.max(...nodes.map((node) => node.x + (node.tone === "ink" ? 204 : 180)));
-      const minY = Math.min(...nodes.map((node) => node.y));
-      const maxY = Math.max(...nodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
+      const minX = Math.min(...exportNodes.map((node) => node.x));
+      const maxX = Math.max(...exportNodes.map((node) => node.x + (node.tone === "ink" ? 204 : 180)));
+      const minY = Math.min(...exportNodes.map((node) => node.y));
+      const maxY = Math.max(...exportNodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
       const scale = Math.min(1500 / Math.max(maxX - minX, 1), 960 / Math.max(maxY - minY, 1), 1.65);
       const ox = (width - (maxX - minX) * scale) / 2 - minX * scale;
       const oy = 150 + (960 - (maxY - minY) * scale) / 2 - minY * scale;
-      nodes.forEach((node) => {
-        const parent = nodes.find((item) => item.id === node.parent);
-        if (!parent) return;
-        const color = node.tone === "sage" ? "#7f9876" : node.tone === "sun" ? "#d8ad44" : "#ed765f";
-        const depth = depthOf(nodes, node);
-        const x1 = ox + (parent.x + 90) * scale, y1 = oy + (parent.y + 35) * scale;
-        const x2 = ox + (node.x + 90) * scale, y2 = oy + (node.y + 35) * scale;
-        const startWidth = Math.max(4, 10 - (depth - 1) * 3) * scale;
-        const curve = createCurvedRibbon(x1, y1, x2, y2, startWidth, Math.max(1.4, startWidth * .12), parent.id + node.id);
-        ctx.fillStyle = color; ctx.globalAlpha = .72; ctx.beginPath();
-        ctx.moveTo(curve.top.start[0], curve.top.start[1]);
-        ctx.bezierCurveTo(curve.top.c1[0], curve.top.c1[1], curve.top.c2[0], curve.top.c2[1], curve.top.end[0], curve.top.end[1]);
-        ctx.lineTo(curve.bottom.end[0], curve.bottom.end[1]);
-        ctx.bezierCurveTo(curve.bottom.c2[0], curve.bottom.c2[1], curve.bottom.c1[0], curve.bottom.c1[1], curve.bottom.start[0], curve.bottom.start[1]);
+      const exportRibbons = viewMode === "tree"
+        ? createTreeBranchRibbons(exportNodes)
+        : exportNodes.flatMap((node) => {
+          const parent = exportNodes.find((item) => item.id === node.parent);
+          if (!parent) return [];
+          const parentBox = nodeBounds(parent), nodeBox = nodeBounds(node);
+          const depth = depthOf(nodes, node);
+          const startWidth = Math.max(4, 10 - (depth - 1) * 3);
+          const curve = createCurvedRibbon(
+            parent.x + parentBox.width / 2,
+            parent.y + parentBox.height / 2,
+            node.x + nodeBox.width / 2,
+            node.y + nodeBox.height / 2,
+            startWidth,
+            Math.max(1.2, startWidth * .12),
+            parent.id + node.id,
+          );
+          return [{ id: `branch-${parent.id}-${node.id}`, tone: node.tone, kind: "branch" as const, curve, path: curve.path }];
+        });
+      const point = (value: number[]) => [ox + value[0] * scale, oy + value[1] * scale];
+      exportRibbons.forEach((ribbon) => {
+        const color = ribbon.tone === "trunk" ? "#8b6b49" : ribbon.tone === "sage" ? "#7f9876" : ribbon.tone === "sun" ? "#d8ad44" : "#ed765f";
+        const curve = ribbon.curve;
+        const topStart = point(curve.top.start), topC1 = point(curve.top.c1), topC2 = point(curve.top.c2), topEnd = point(curve.top.end);
+        const bottomStart = point(curve.bottom.start), bottomC1 = point(curve.bottom.c1), bottomC2 = point(curve.bottom.c2), bottomEnd = point(curve.bottom.end);
+        ctx.fillStyle = color; ctx.globalAlpha = ribbon.kind === "trunk" ? .86 : .74; ctx.beginPath();
+        ctx.moveTo(topStart[0], topStart[1]);
+        ctx.bezierCurveTo(topC1[0], topC1[1], topC2[0], topC2[1], topEnd[0], topEnd[1]);
+        ctx.lineTo(bottomEnd[0], bottomEnd[1]);
+        ctx.bezierCurveTo(bottomC2[0], bottomC2[1], bottomC1[0], bottomC1[1], bottomStart[0], bottomStart[1]);
         ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
       });
-      nodes.forEach((node) => {
+      exportNodes.forEach((node) => {
         const x = ox + node.x * scale, y = oy + node.y * scale;
         const w = (node.tone === "ink" ? 204 : 180) * scale, h = (node.tone === "ink" ? 82 : 70) * scale;
         ctx.fillStyle = node.tone === "ink" ? "#211f1a" : "#fffcf6";
@@ -920,7 +969,7 @@ export default function MindMapStudio({
             <span aria-hidden="true">↷</span>
           </button>
           <span className="tool-divider" aria-hidden="true" />
-          <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => setViewMode((mode) => mode === "canvas" ? "outline" : "canvas")} aria-label={viewMode === "canvas" ? "切換至大綱模式" : "切換至心智圖模式"} data-tooltip={viewMode === "canvas" ? "切換至大綱" : "切換至畫布"}>
+          <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => selectViewMode(viewMode === "outline" ? "canvas" : "outline")} aria-label={viewMode === "outline" ? "切換至心智圖模式" : "切換至大綱模式"} data-tooltip={viewMode === "outline" ? "切換至畫布" : "切換至大綱"}>
             <span aria-hidden="true">≡</span>
           </button>
           {!isCloud && <>
@@ -931,28 +980,28 @@ export default function MindMapStudio({
           </>}
         </nav>
 
-        <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${panning ? "panning" : ""}`} onPointerDown={beginCanvasPan} onPointerMove={onPointerMove} onPointerUp={endPointerInteraction} onPointerCancel={endPointerInteraction}>
+        <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${viewMode === "tree" ? "tree-active" : ""} ${panning ? "panning" : ""}`} onPointerDown={beginCanvasPan} onPointerMove={onPointerMove} onPointerUp={endPointerInteraction} onPointerCancel={endPointerInteraction}>
           <div className="canvas-commandbar">
-            <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => setViewMode("canvas")}>心智圖</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => setViewMode("outline")}>大綱</button></div>
+            <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => selectViewMode("canvas")}>心智圖</button><button className={viewMode === "tree" ? "active" : ""} onClick={() => selectViewMode("tree")}>樹狀</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => selectViewMode("outline")}>大綱</button></div>
             <label className="node-search"><span aria-hidden="true">⌕</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜尋節點" aria-label="搜尋節點" /></label>
             <button className="layout-button" data-testid="auto-layout-all" onClick={() => applyAutoLayout()}>智慧整理</button>
             <button className="fit-button" onClick={fitToView}>適合畫面</button>
           </div>
-          {viewMode === "canvas" ? <>
-          <div className="canvas-hint">拖曳空白處平移 · 拖曳節點整理 · 雙擊編輯</div>
+          {viewMode !== "outline" ? <>
+          <div className="canvas-hint">{viewMode === "tree" ? "拖曳空白處平移 · 點選分枝 · 雙擊編輯" : "拖曳空白處平移 · 拖曳節點整理 · 雙擊編輯"}</div>
           <div className="map-stage" style={{ transform: `translate(${stageOffset.x + stagePan.x}px, ${stageOffset.y + stagePan.y}px) scale(${zoom / 100})` }}>
             <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
-              {connections.map((line) => <path key={line.id} className={`connection ${line.tone}`} d={line.path} />)}
+              {connections.map((line) => <path key={line.id} className={`connection ${line.kind} ${line.tone}`} d={line.path} />)}
             </svg>
-            {visibleNodes.map((node) => {
+            {displayNodes.map((node) => {
               const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
               const hasChildren = nodes.some((item) => item.parent === node.id);
               return (
               <article
                 key={node.id}
-                className={`mind-node ${node.tone} ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`}
+                className={`mind-node ${node.tone} ${viewMode === "tree" ? "tree-node" : ""} ${viewMode === "tree" && !hasChildren ? "tree-leaf" : ""} ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""}`}
                 style={{ left: node.x, top: node.y }}
-                onPointerDown={(event) => { if (editingId === node.id) return; event.stopPropagation(); drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y, moved: false, before: { nodes, selectedId } }; setSelectedId(node.id); event.currentTarget.setPointerCapture(event.pointerId); }}
+                onPointerDown={(event) => { if (editingId === node.id) return; event.stopPropagation(); setSelectedId(node.id); if (viewMode === "tree") return; drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y, moved: false, before: { nodes, selectedId } }; event.currentTarget.setPointerCapture(event.pointerId); }}
                 onDoubleClick={() => beginEdit(node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div className="node-copy"><h3>{node.text}</h3><p>{node.note}</p></div>}

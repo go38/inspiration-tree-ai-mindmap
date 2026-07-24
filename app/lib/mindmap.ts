@@ -44,6 +44,10 @@ const LAYOUT_ROOT_HEIGHT = 82;
 const LAYOUT_COLUMN_GAP = 112;
 const LAYOUT_ROW_GAP = 28;
 const LAYOUT_COLLISION_GAP = 18;
+const TREE_STAGE_CENTER_X = 540;
+const TREE_ROOT_Y = 650;
+const TREE_LEVEL_GAP = 250;
+const TREE_LEAF_STEP = 212;
 
 type LayoutDirection = -1 | 1;
 
@@ -293,6 +297,94 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
   return changed ? next : nodes;
 }
 
+/**
+ * Read-only, bottom-up tree layout used by the "樹狀" view.
+ *
+ * The root becomes the base of the trunk, descendants grow upward, and every
+ * parent is centered over the horizontal span of its leaves. The returned
+ * nodes are copies, so switching views never changes the saved mind-map
+ * coordinates or creates an undo checkpoint.
+ */
+export function layoutTreeViewNodes(nodes: NodeItem[]): NodeItem[] {
+  if (nodes.length === 0) return [];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const root = nodes.find((node) => node.parent === null);
+  if (!root) return nodes.map((node) => ({ ...node }));
+
+  const childrenByParent = new Map<number, NodeItem[]>();
+  for (const node of nodes) {
+    if (node.parent === null || !byId.has(node.parent)) continue;
+    const siblings = childrenByParent.get(node.parent);
+    if (siblings) siblings.push(node);
+    else childrenByParent.set(node.parent, [node]);
+  }
+
+  const depthById = new Map<number, number>([[root.id, 0]]);
+  const centerSlotById = new Map<number, number>();
+  const visiting = new Set<number>();
+  const visited = new Set<number>();
+  let nextLeafSlot = 0;
+  let maxDepth = 0;
+
+  const measure = (node: NodeItem, depth: number): number => {
+    if (visiting.has(node.id) || visited.has(node.id)) {
+      const fallback = nextLeafSlot++;
+      centerSlotById.set(node.id, fallback);
+      return fallback;
+    }
+    visiting.add(node.id);
+    visited.add(node.id);
+    depthById.set(node.id, depth);
+    maxDepth = Math.max(maxDepth, depth);
+    const children = (childrenByParent.get(node.id) ?? []).filter((child) => !visiting.has(child.id));
+    let centerSlot: number;
+    if (children.length === 0) {
+      centerSlot = nextLeafSlot++;
+    } else {
+      const childSlots = children.map((child) => measure(child, depth + 1));
+      centerSlot = (childSlots[0] + childSlots[childSlots.length - 1]) / 2;
+    }
+    centerSlotById.set(node.id, centerSlot);
+    visiting.delete(node.id);
+    return centerSlot;
+  };
+
+  measure(root, 0);
+  // Keep malformed or disconnected nodes deterministic and visible rather
+  // than stacking them on the root.
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue;
+    depthById.set(node.id, 1);
+    centerSlotById.set(node.id, nextLeafSlot++);
+  }
+
+  const leafMiddle = Math.max(0, nextLeafSlot - 1) / 2;
+  const rootY = Math.max(TREE_ROOT_Y, maxDepth * TREE_LEVEL_GAP + 76);
+  const rootChildren = childrenByParent.get(root.id) ?? [];
+  const rootChildStagger = new Map<number, number>();
+  if (rootChildren.length >= 3) {
+    const middle = (rootChildren.length - 1) / 2;
+    const span = Math.max(middle, 1);
+    rootChildren.forEach((child, index) => {
+      const edgeRatio = Math.abs(index - middle) / span;
+      rootChildStagger.set(child.id, Math.round(edgeRatio * 190 - 180));
+    });
+  }
+  return nodes.map((node) => {
+    const depth = depthById.get(node.id) ?? 1;
+    const bounds = nodeBounds(node);
+    const centerX = TREE_STAGE_CENTER_X + ((centerSlotById.get(node.id) ?? leafMiddle) - leafMiddle) * TREE_LEAF_STEP;
+    // Small alternating lift gives the crown a natural rhythm while the
+    // generous level gap still guarantees children remain above parents.
+    const stagger = rootChildStagger.get(node.id) ?? (depth > 0 ? ((node.id % 3) - 1) * 12 : 0);
+    return {
+      ...node,
+      x: Math.round(centerX - bounds.width / 2),
+      y: Math.round(rootY - depth * TREE_LEVEL_GAP + stagger),
+    };
+  });
+}
+
 /** Move a node before another sibling while preserving every subtree. */
 export function reorderSiblingNodes(nodes: NodeItem[], sourceId: number, targetId: number): NodeItem[] {
   if (sourceId === targetId) return nodes;
@@ -376,4 +468,134 @@ export function createCurvedRibbon(
     top, bottom,
     path: `M ${p(top.start)} C ${p(top.c1)}, ${p(top.c2)}, ${p(top.end)} L ${p(bottom.end)} C ${p(bottom.c2)}, ${p(bottom.c1)}, ${p(bottom.start)} Z`,
   };
+}
+
+export type TreeRibbon = {
+  id: string;
+  tone: NodeItem["tone"] | "trunk";
+  kind: "trunk" | "branch";
+  curve: ReturnType<typeof createCurvedRibbon>;
+  path: string;
+};
+
+/**
+ * Build a tree-like connection system with shared trunks and visible forks.
+ *
+ * Parents with multiple children grow one common trunk. Their colored limbs
+ * peel away at staggered heights: outer branches leave lower while inner
+ * branches follow the trunk farther upward. A single-child chain remains one
+ * continuous branch in the child's color.
+ */
+export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
+  if (nodes.length < 2) return [];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map<number, NodeItem[]>();
+  for (const node of nodes) {
+    if (node.parent === null || !byId.has(node.parent)) continue;
+    const children = childrenByParent.get(node.parent);
+    if (children) children.push(node);
+    else childrenByParent.set(node.parent, [node]);
+  }
+
+  const ribbons: TreeRibbon[] = [];
+  for (const parent of nodes) {
+    const children = childrenByParent.get(parent.id) ?? [];
+    if (children.length === 0) continue;
+    const parentBox = nodeBounds(parent);
+    const parentX = parent.x + parentBox.width / 2;
+    const parentY = parent.y;
+    const parentDepth = depthOf(nodes, parent);
+    const trunkWidth = Math.max(8, 22 - parentDepth * 6);
+
+    if (children.length === 1) {
+      const child = children[0];
+      const childBox = nodeBounds(child);
+      const endX = child.x + childBox.width / 2;
+      const endY = child.y + childBox.height;
+      const curve = createCurvedRibbon(
+        parentX,
+        parentY,
+        endX,
+        endY,
+        trunkWidth,
+        Math.max(1.6, trunkWidth * .16),
+        parent.id * 31 + child.id,
+      );
+      ribbons.push({
+        id: `branch-${parent.id}-${child.id}`,
+        tone: child.tone,
+        kind: "branch",
+        curve,
+        path: curve.path,
+      });
+      continue;
+    }
+
+    const orderedChildren = [...children].sort((a, b) => {
+      const aCenter = a.x + nodeBounds(a).width / 2;
+      const bCenter = b.x + nodeBounds(b).width / 2;
+      return aCenter - bCenter;
+    });
+    const childCenters = orderedChildren.map((child) => child.x + nodeBounds(child).width / 2);
+    const maxHorizontalDistance = Math.max(
+      1,
+      ...childCenters.map((center) => Math.abs(center - parentX)),
+    );
+    const branchStarts = orderedChildren.map((child, index) => {
+      const distance = childCenters[index] - parentX;
+      const edgeRatio = Math.abs(distance) / maxHorizontalDistance;
+      const childBottom = child.y + nodeBounds(child).height;
+      const availableRise = Math.max(42, parentY - childBottom);
+      const desiredRise = 48 + (1 - edgeRatio) * 72;
+      const rise = Math.min(desiredRise, Math.max(38, availableRise * .72));
+      return {
+        child,
+        x: parentX + Math.sign(distance) * Math.min(11, Math.abs(distance) * .035),
+        y: parentY - rise,
+        edgeRatio,
+      };
+    });
+    const trunkEndY = Math.min(...branchStarts.map((start) => start.y)) - 5;
+    const junctionWidth = Math.max(6, trunkWidth * .42);
+    const trunk = createCurvedRibbon(
+      parentX,
+      parentY,
+      parentX,
+      trunkEndY,
+      trunkWidth,
+      junctionWidth,
+      parent.id * 19,
+    );
+    ribbons.push({
+      id: `trunk-${parent.id}`,
+      tone: "trunk",
+      kind: "trunk",
+      curve: trunk,
+      path: trunk.path,
+    });
+
+    branchStarts.forEach(({ child, x, y, edgeRatio }, index) => {
+      const childBox = nodeBounds(child);
+      const endX = child.x + childBox.width / 2;
+      const endY = child.y + childBox.height;
+      const branchWidth = Math.max(5.5, trunkWidth * (.38 + (1 - edgeRatio) * .12));
+      const curve = createCurvedRibbon(
+        x,
+        y,
+        endX,
+        endY,
+        branchWidth,
+        Math.max(1.3, branchWidth * .18),
+        parent.id * 47 + child.id + index,
+      );
+      ribbons.push({
+        id: `branch-${parent.id}-${child.id}`,
+        tone: child.tone,
+        kind: "branch",
+        curve,
+        path: curve.path,
+      });
+    });
+  }
+  return ribbons;
 }

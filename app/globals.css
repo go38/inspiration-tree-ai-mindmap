@@ -70,6 +70,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .connections-layer { position:absolute; inset:0; z-index:0; width:100%; height:100%; overflow:visible; pointer-events:none; filter:drop-shadow(0 1px 0 rgba(255,255,255,.48)); }
 .connection { opacity:.78; }
 .connection.coral{fill:var(--coral)} .connection.sage{fill:var(--sage)} .connection.sun{fill:#d2aa48}
+.connection.trunk { fill:#8b6b49; }
+.tree-active .connection.branch { opacity:.82; filter:saturate(.84); }
+.tree-active .connection.trunk { opacity:.9; filter:drop-shadow(0 1px 0 rgba(255,255,255,.28)); }
+.tree-active .canvas-hint { display:none; }
 .mind-node { position:absolute; z-index:2; width:180px; min-height:82px; padding:12px 13px 35px 16px; border:1px solid var(--line); border-left:5px solid var(--coral); background:var(--warm-white); border-radius:14px; box-shadow:0 5px 13px rgba(48,42,31,.08); display:flex; gap:8px; align-items:flex-start; cursor:grab; user-select:none; transition:left .24s ease,top .24s ease,box-shadow .16s,transform .16s; }
 .mind-node:active { cursor:grabbing; }
 .mind-node:hover { box-shadow:0 8px 20px rgba(48,42,31,.13); }
@@ -77,6 +81,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .mind-node.search-match { box-shadow:0 0 0 5px rgba(243,216,146,.75),0 8px 20px rgba(48,42,31,.13); }
 .mind-node.ink { width:204px; min-height:94px; margin-left:-12px; margin-top:-6px; background:var(--ink); color:white; border:0; border-radius:18px; box-shadow:0 10px 25px rgba(33,31,26,.22); }
 .mind-node.sage { border-left-color:var(--sage); } .mind-node.sun { border-left-color:#d8ad44; } .mind-node.coral { border-left-color:var(--coral); }
+.tree-active .mind-node { cursor:pointer; box-shadow:0 7px 18px rgba(48,42,31,.1); }
+.tree-active .mind-node:active { cursor:pointer; }
+.tree-active .mind-node.tree-leaf { border-radius:19px 19px 19px 8px; }
+.tree-active .mind-node.tree-leaf:nth-of-type(even) { border-radius:19px 8px 19px 19px; }
+.tree-active .mind-node.ink { border-radius:24px 24px 18px 18px; box-shadow:0 12px 28px rgba(33,31,26,.24); }
 .mind-node h3 { margin:0 0 4px; font:600 14px/1.25 var(--font-serif),serif; }
 .mind-node.ink h3 { font-size:17px; }
 .mind-node p { margin:0; color:#898175; font-size:9.5px; line-height:1.35; }
@@ -217,7 +226,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 @media (max-width:1050px) { .workspace{grid-template-columns:60px minmax(450px,1fr) 310px}.ai-panel{font-size:90%}.brand small,.saved{display:none}.map-stage{left:44%} }
 @media (max-width:760px) {
   .app-shell{min-height:760px}.topbar{grid-template-columns:1fr auto;padding-inline:12px}.document-title{display:none}.workspace{height:calc(100vh - 76px);grid-template-columns:60px 1fr}.toolrail{padding-inline:4px;overflow-y:auto}.tool{width:50px;height:50px;font-size:27px}.tool::after{display:none}.map-stage{left:50%;transform-origin:center}.canvas-hint{display:none}.brand{font-size:17px}.brand small{display:none}.share-button{padding:0 10px}.export-button{padding:0 10px}.workspace-link{padding:0 9px}.export-menu{right:-48px}
-  .canvas-commandbar{left:9px;right:9px;top:10px;gap:5px}.view-switch{display:none}.node-search{width:auto;flex:1;margin-left:0}.fit-button,.layout-button{padding-inline:8px}.zoom-control{bottom:76px}
+  .canvas-commandbar{left:9px;right:9px;top:10px;gap:5px;flex-wrap:wrap}.view-switch{display:flex;order:0;flex:1 1 138px}.view-switch button{flex:1;padding-inline:6px}.node-search{order:2;width:auto;flex:1 1 calc(100% - 142px);margin-left:0}.layout-button{order:3}.fit-button{order:4}.fit-button,.layout-button{padding-inline:8px}.zoom-control{bottom:76px}
   .ai-backdrop{display:block;position:fixed;z-index:18;inset:76px 0 0 60px;border:0;background:rgba(33,31,26,.28)}
   .ai-panel{position:fixed;z-index:20;left:60px;right:0;bottom:0;width:auto;height:min(72vh,650px);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;box-shadow:0 -12px 38px rgba(33,31,26,.2);overflow:hidden;transform:translateY(calc(100% - 66px));transition:transform .25s ease}
   .ai-panel.mobile-open{transform:translateY(0)}.ai-header{height:66px;flex-basis:66px;padding:0 14px;cursor:pointer}.sheet-handle{display:inline!important;margin-left:4px;color:var(--muted);font:700 16px var(--font-sans)!important;transition:transform .2s}.ai-panel.mobile-open .sheet-handle{transform:rotate(180deg)}

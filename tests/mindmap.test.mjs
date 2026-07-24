@@ -9,7 +9,9 @@ import {
   buildMarkdownLines,
   collectSubtreeIds,
   depthOf,
+  createTreeBranchRibbons,
   historyShortcutForKey,
+  layoutTreeViewNodes,
   nextNodeId,
   moveSiblingNode,
   nodeBounds,
@@ -166,4 +168,98 @@ test("branch auto layout anchors the selected root, avoids outsiders, and leaves
       assert.equal(nodeBoundsOverlap(nodeBounds(laidOut[i]), nodeBounds(laidOut[j])), false);
     }
   }
+});
+
+test("tree view layout grows upward without changing saved node data", () => {
+  const nodes = sampleNodes();
+  const laidOut = layoutTreeViewNodes(nodes);
+  const byId = new Map(laidOut.map((node) => [node.id, node]));
+
+  assert.notEqual(laidOut, nodes);
+  assert.deepEqual(nodes.map(({ id, x, y }) => ({ id, x, y })), [
+    { id: 1, x: 0, y: 0 },
+    { id: 2, x: 0, y: 0 },
+    { id: 3, x: 0, y: 0 },
+    { id: 4, x: 0, y: 0 },
+  ], "source coordinates stay untouched");
+
+  for (const node of laidOut.slice(1)) {
+    const parent = byId.get(node.parent);
+    assert.ok(node.y + nodeBounds(node).height < parent.y, `node ${node.id} grows above its parent`);
+    assert.equal(node.text, nodes.find((item) => item.id === node.id).text);
+    assert.equal(node.note, nodes.find((item) => item.id === node.id).note);
+  }
+
+  for (let i = 0; i < laidOut.length; i++) {
+    for (let j = i + 1; j < laidOut.length; j++) {
+      assert.equal(nodeBoundsOverlap(nodeBounds(laidOut[i]), nodeBounds(laidOut[j])), false);
+    }
+  }
+});
+
+test("tree view layout is deterministic for a broad 100-node crown", () => {
+  const nodes = [{ id: 1, parent: null, text: "根", note: "", x: 400, y: 280, tone: "ink" }];
+  for (let id = 2; id <= 100; id++) {
+    const parent = id <= 9 ? 1 : 2 + ((id - 10) % 8);
+    nodes.push({ id, parent, text: `節點 ${id}`, note: "", x: id, y: id, tone: id % 2 ? "sage" : "coral" });
+  }
+  const first = layoutTreeViewNodes(nodes);
+  const second = layoutTreeViewNodes(nodes);
+  assert.deepEqual(first, second);
+  const byId = new Map(first.map((node) => [node.id, node]));
+  for (const node of first.slice(1)) {
+    assert.ok(node.y + nodeBounds(node).height < byId.get(node.parent).y);
+  }
+});
+
+test("tree connections share a trunk before splitting into thinner branches", () => {
+  const laidOut = layoutTreeViewNodes(sampleNodes());
+  const ribbons = createTreeBranchRibbons(laidOut);
+  const rootTrunk = ribbons.find((ribbon) => ribbon.id === "trunk-1");
+  const rootBranches = ribbons.filter((ribbon) => ribbon.id === "branch-1-2" || ribbon.id === "branch-1-4");
+
+  assert.ok(rootTrunk, "a multi-child root grows one shared trunk");
+  assert.equal(rootBranches.length, 2);
+  assert.equal(ribbons.length, 4, "three edges become one trunk plus three branches");
+  assert.equal(rootTrunk.tone, "trunk");
+
+  const startCenter = (ribbon) => ({
+    x: (ribbon.curve.top.start[0] + ribbon.curve.bottom.start[0]) / 2,
+    y: (ribbon.curve.top.start[1] + ribbon.curve.bottom.start[1]) / 2,
+  });
+  const firstStart = startCenter(rootBranches[0]);
+  const secondStart = startCenter(rootBranches[1]);
+  assert.equal(firstStart.y, secondStart.y, "balanced siblings leave the trunk at the same height");
+  assert.ok(Math.abs(firstStart.x - secondStart.x) < 12, "siblings peel from the same narrow trunk");
+
+  const trunkStartWidth = Math.hypot(
+    rootTrunk.curve.top.start[0] - rootTrunk.curve.bottom.start[0],
+    rootTrunk.curve.top.start[1] - rootTrunk.curve.bottom.start[1],
+  );
+  const branchStartWidth = Math.hypot(
+    rootBranches[0].curve.top.start[0] - rootBranches[0].curve.bottom.start[0],
+    rootBranches[0].curve.top.start[1] - rootBranches[0].curve.bottom.start[1],
+  );
+  assert.ok(trunkStartWidth > branchStartWidth, "the trunk is thicker than its outgoing branches");
+});
+
+test("wide tree crowns peel colored limbs from staggered trunk heights", () => {
+  const nodes = [
+    { id: 1, parent: null, text: "根", note: "", x: 438, y: 568, tone: "ink" },
+    { id: 2, parent: 1, text: "左一", note: "", x: 26, y: 378, tone: "coral" },
+    { id: 3, parent: 1, text: "左二", note: "", x: 238, y: 378, tone: "sage" },
+    { id: 4, parent: 1, text: "右一", note: "", x: 662, y: 378, tone: "sun" },
+    { id: 5, parent: 1, text: "右二", note: "", x: 874, y: 378, tone: "coral" },
+  ];
+  const ribbons = createTreeBranchRibbons(nodes);
+  assert.equal(ribbons.filter((ribbon) => ribbon.id === "trunk-1").length, 1);
+  const branches = ribbons.filter((ribbon) => ribbon.kind === "branch");
+  assert.equal(branches.length, 4);
+  assert.ok(ribbons.every((ribbon) => !ribbon.id.startsWith("bough-")));
+
+  const startY = (ribbon) =>
+    (ribbon.curve.top.start[1] + ribbon.curve.bottom.start[1]) / 2;
+  const outerBranch = ribbons.find((ribbon) => ribbon.id === "branch-1-2");
+  const innerBranch = ribbons.find((ribbon) => ribbon.id === "branch-1-3");
+  assert.ok(startY(outerBranch) > startY(innerBranch), "outer limbs leave the trunk lower");
 });
