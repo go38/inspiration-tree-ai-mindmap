@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
+  autoLayoutNodes,
   buildMarkdownLines,
   collectSubtreeIds,
   createCurvedRibbon,
   depthOf,
   moveSiblingNode,
   nextNodeId,
+  nodeBounds,
   pushHistory,
   reorderSiblingNodes,
   safeFilename,
@@ -64,7 +67,7 @@ const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
 
 export type Persistence =
   | { mode: "local" }
-  | { mode: "cloud"; mapId: string; version: number; title: string };
+  | { mode: "cloud"; mapId: string; version: number; title: string; personal?: boolean };
 
 type ServerMap = {
   id: string;
@@ -213,6 +216,10 @@ export default function MindMapStudio({
     }
   }
 
+  /* eslint-disable react-hooks/set-state-in-effect --
+   * These two effects intentionally mirror external persistence state:
+   * autosave exposes its pending status immediately, while localStorage must
+   * restore after hydration so server and client markup stay deterministic. */
   // Debounced autosave. Skips until the initial restore has run so a freshly
   // loaded page never overwrites the source of truth on mount.
   useEffect(() => {
@@ -252,6 +259,7 @@ export default function MindMapStudio({
     hydrated.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   function resetToSample() {
     if (!window.confirm("確定要清除目前草稿並回到預設範例嗎？此動作可以復原。")) return;
@@ -390,20 +398,42 @@ export default function MindMapStudio({
     flashToast(`已加入「${suggestion.title}」`);
   }
 
-  function fitToView() {
-    if (!visibleNodes.length) return;
+  function fitNodesToView(items: NodeItem[], message = "已將心智圖調整至畫面中央") {
+    if (!items.length) return;
     const rect = canvasRef.current?.getBoundingClientRect();
-    const minX = Math.min(...visibleNodes.map((node) => node.x));
-    const maxX = Math.max(...visibleNodes.map((node) => node.x + (node.tone === "ink" ? 204 : 180)));
-    const minY = Math.min(...visibleNodes.map((node) => node.y));
-    const maxY = Math.max(...visibleNodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
+    const bounds = items.map(nodeBounds);
+    const minX = Math.min(...bounds.map((box) => box.x));
+    const maxX = Math.max(...bounds.map((box) => box.x + box.width));
+    const minY = Math.min(...bounds.map((box) => box.y));
+    const maxY = Math.max(...bounds.map((box) => box.y + box.height));
     const nextZoom = rect
       ? Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
       : 100;
     setZoom(nextZoom);
     setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
     setStagePan({ x: 0, y: 0 });
-    flashToast("已將心智圖調整至畫面中央");
+    flashToast(message);
+  }
+
+  function fitToView() {
+    fitNodesToView(visibleNodes);
+  }
+
+  function applyAutoLayout(branchRootId?: number) {
+    const next = autoLayoutNodes(nodes, branchRootId);
+    if (next === nodes) {
+      flashToast("目前布局已經很整齊");
+      return;
+    }
+    const branchRoot = branchRootId === undefined ? undefined : nodes.find((node) => node.id === branchRootId);
+    checkpoint();
+    setNodes(next);
+    setViewMode("canvas");
+    const nextVisible = next.filter((node) => visibleNodeIds.has(node.id));
+    const message = branchRoot && branchRoot.parent !== null
+      ? `已整理「${branchRoot.text}」分支，可復原`
+      : "已整理整張圖，可復原";
+    fitNodesToView(nextVisible, message);
   }
 
   function beginTitleEdit() {
@@ -685,7 +715,9 @@ export default function MindMapStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId, nodes, selectedId]);
 
-  const statusLabel = isCloud ? SYNC_LABEL[sync] : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
+  const statusLabel = isCloud
+    ? sync === "idle" && persistence.personal ? "個人地圖" : SYNC_LABEL[sync]
+    : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
 
   return (
     <main className="app-shell">
@@ -693,6 +725,7 @@ export default function MindMapStudio({
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
         <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} aria-label={`修改標題：${documentTitle}`}>{documentTitle}<span aria-hidden="true">✎</span></button>} <span className="saved">{statusLabel}</span></div>
         <div className="top-actions">
+          <Link className="workspace-link" href="/maps">我的地圖</Link>
           <div className="export-wrap">
             <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>
             {exportOpen && <div className="export-menu" role="menu">
@@ -702,7 +735,7 @@ export default function MindMapStudio({
             </div>}
           </div>
           {isCloud ? (
-            <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); flashToast("共享連結已複製"); }}>複製連結 <span>↗</span></button>
+            <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); flashToast(persistence.personal ? "地圖網址已複製" : "共享連結已複製"); }}>{persistence.personal ? "複製網址" : "複製連結"} <span>↗</span></button>
           ) : (
             <button className="share-button" onClick={createSharedMap} disabled={sharing}>{sharing ? "建立中…" : "建立共享連結"} <span>↗</span></button>
           )}
@@ -750,6 +783,7 @@ export default function MindMapStudio({
           <div className="canvas-commandbar">
             <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => setViewMode("canvas")}>心智圖</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => setViewMode("outline")}>大綱</button></div>
             <label className="node-search"><span aria-hidden="true">⌕</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜尋節點" aria-label="搜尋節點" /></label>
+            <button className="layout-button" data-testid="auto-layout-all" onClick={() => applyAutoLayout()}>智慧整理</button>
             <button className="fit-button" onClick={fitToView}>適合畫面</button>
           </div>
           {viewMode === "canvas" ? <>
@@ -770,7 +804,7 @@ export default function MindMapStudio({
                 onDoubleClick={() => beginEdit(node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div><h3>{node.text}</h3><p>{node.note}</p></div>}
-                {editingId !== node.id && <div className="node-actions"><button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginEdit(node); }} aria-label={`編輯${node.text}`}>✎</button>{hasChildren && <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); toggleCollapsed(node.id); }} aria-label={`${collapsedIds.has(node.id) ? "展開" : "收合"}${node.text}`}>{collapsedIds.has(node.id) ? "▸" : "▾"}</button>}<button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); addNode(node.id); }} aria-label={`在${node.text}下新增節點`}>＋</button></div>}
+                {editingId !== node.id && <div className="node-actions"><button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginEdit(node); }} aria-label={`編輯${node.text}`}>✎</button>{hasChildren && <><button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); toggleCollapsed(node.id); }} aria-label={`${collapsedIds.has(node.id) ? "展開" : "收合"}${node.text}`}>{collapsedIds.has(node.id) ? "▸" : "▾"}</button><button data-testid={`auto-layout-branch-${node.id}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); applyAutoLayout(node.id); }} aria-label={`智慧整理${node.text}分支`}>⌗</button></>}<button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); addNode(node.id); }} aria-label={`在${node.text}下新增節點`}>＋</button></div>}
               </article>
             );})}
           </div>

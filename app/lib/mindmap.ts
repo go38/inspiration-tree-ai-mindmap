@@ -21,6 +21,22 @@ export type HistoryState = {
 export const HISTORY_LIMIT = 15;
 
 const TONES = new Set(["ink", "coral", "sage", "sun"]);
+const LAYOUT_NODE_WIDTH = 180;
+const LAYOUT_ROOT_WIDTH = 204;
+const LAYOUT_NODE_HEIGHT = 70;
+const LAYOUT_ROOT_HEIGHT = 82;
+const LAYOUT_COLUMN_GAP = 112;
+const LAYOUT_ROW_GAP = 28;
+const LAYOUT_COLLISION_GAP = 18;
+
+type LayoutDirection = -1 | 1;
+
+type NodeBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 /** Structural guard for a single persisted node (used by storage + shared maps). */
 export function isValidNode(value: unknown): value is NodeItem {
@@ -89,6 +105,176 @@ export function collectSubtreeIds(nodes: NodeItem[], rootId: number): Set<number
     });
   }
   return ids;
+}
+
+/** Rendered node size used by fit-to-view, auto-layout, and overlap tests. */
+export function nodeBounds(node: NodeItem): NodeBounds {
+  return {
+    x: node.x,
+    y: node.y,
+    width: node.tone === "ink" ? LAYOUT_ROOT_WIDTH : LAYOUT_NODE_WIDTH,
+    height: node.tone === "ink" ? LAYOUT_ROOT_HEIGHT : LAYOUT_NODE_HEIGHT,
+  };
+}
+
+/** True when two rendered node cards overlap (optionally including a gap). */
+export function nodeBoundsOverlap(a: NodeBounds, b: NodeBounds, gap = 0): boolean {
+  return (
+    a.x < b.x + b.width + gap &&
+    a.x + a.width + gap > b.x &&
+    a.y < b.y + b.height + gap &&
+    a.y + a.height + gap > b.y
+  );
+}
+
+/**
+ * Deterministic tidy-tree layout.
+ *
+ * With no rootId (or the center id), first-level branches are placed on both
+ * sides of the center while preserving an existing clear left/right choice.
+ * With a non-center rootId, that branch root stays anchored and descendants
+ * are arranged outward on its current side. Unselected nodes never move.
+ */
+export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] {
+  if (nodes.length < 2) return nodes;
+
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const center = nodes.find((node) => node.parent === null);
+  const target = rootId === undefined ? center : byId.get(rootId);
+  if (!center || !target) return nodes;
+
+  const childrenByParent = new Map<number, NodeItem[]>();
+  for (const node of nodes) {
+    if (node.parent === null || !byId.has(node.parent)) continue;
+    const siblings = childrenByParent.get(node.parent);
+    if (siblings) siblings.push(node);
+    else childrenByParent.set(node.parent, [node]);
+  }
+
+  const positioned = new Map<number, { x: number; y: number }>();
+  const reachable = new Set<number>();
+
+  const layoutForest = (
+    anchor: NodeItem,
+    roots: NodeItem[],
+    direction: LayoutDirection,
+  ) => {
+    if (roots.length === 0) return;
+    const centers = new Map<number, number>();
+    const visited = new Set<number>([anchor.id]);
+    let nextLeafCenter = 0;
+
+    const arrangeY = (node: NodeItem): number => {
+      if (visited.has(node.id)) return nextLeafCenter;
+      visited.add(node.id);
+      reachable.add(node.id);
+      const children = (childrenByParent.get(node.id) ?? []).filter((child) => !visited.has(child.id));
+      if (children.length === 0) {
+        const centerY = nextLeafCenter;
+        nextLeafCenter += LAYOUT_NODE_HEIGHT + LAYOUT_ROW_GAP;
+        centers.set(node.id, centerY);
+        return centerY;
+      }
+      const childCenters = children.map(arrangeY);
+      const centerY = (childCenters[0] + childCenters[childCenters.length - 1]) / 2;
+      centers.set(node.id, centerY);
+      return centerY;
+    };
+
+    roots.forEach(arrangeY);
+    const laidOutCenters = [...centers.values()];
+    const forestMiddle = (Math.min(...laidOutCenters) + Math.max(...laidOutCenters)) / 2;
+    const anchorCenterY = anchor.y + nodeBounds(anchor).height / 2;
+
+    const assignX = (node: NodeItem, depth: number, path: Set<number>) => {
+      if (path.has(node.id)) return;
+      const nextPath = new Set(path).add(node.id);
+      const anchorBounds = nodeBounds(anchor);
+      const x = direction > 0
+        ? anchor.x + anchorBounds.width + LAYOUT_COLUMN_GAP + (depth - 1) * (LAYOUT_NODE_WIDTH + LAYOUT_COLUMN_GAP)
+        : anchor.x - LAYOUT_COLUMN_GAP - LAYOUT_NODE_WIDTH - (depth - 1) * (LAYOUT_NODE_WIDTH + LAYOUT_COLUMN_GAP);
+      const centerY = (centers.get(node.id) ?? forestMiddle) - forestMiddle + anchorCenterY;
+      positioned.set(node.id, { x, y: centerY - nodeBounds(node).height / 2 });
+      (childrenByParent.get(node.id) ?? []).forEach((child) => assignX(child, depth + 1, nextPath));
+    };
+
+    roots.forEach((root) => assignX(root, 1, new Set([anchor.id])));
+  };
+
+  if (target.parent === null) {
+    const rootChildren = childrenByParent.get(target.id) ?? [];
+    const left: NodeItem[] = [];
+    const right: NodeItem[] = [];
+    let ambiguousIndex = 0;
+    const centerX = target.x + nodeBounds(target).width / 2;
+
+    for (const child of rootChildren) {
+      const childCenterX = child.x + nodeBounds(child).width / 2;
+      if (childCenterX < centerX - 24) left.push(child);
+      else if (childCenterX > centerX + 24) right.push(child);
+      else {
+        (ambiguousIndex % 2 === 0 ? left : right).push(child);
+        ambiguousIndex += 1;
+      }
+    }
+    layoutForest(target, left, -1);
+    layoutForest(target, right, 1);
+  } else {
+    const parent = byId.get(target.parent);
+    const parentCenterX = parent ? parent.x + nodeBounds(parent).width / 2 : target.x;
+    const targetCenterX = target.x + nodeBounds(target).width / 2;
+    const direction: LayoutDirection = targetCenterX < parentCenterX ? -1 : 1;
+    layoutForest(target, childrenByParent.get(target.id) ?? [], direction);
+
+    // Move the arranged descendants together by the smallest vertical amount
+    // that clears cards outside the selected branch. The branch root remains
+    // fixed, so a local tidy-up never repositions unrelated ideas.
+    const candidates = nodes
+      .filter((node) => positioned.has(node.id))
+      .map((node) => ({ ...node, ...positioned.get(node.id)! }));
+    const fixed = nodes.filter((node) => !reachable.has(node.id));
+    const forbiddenOffsets: [number, number][] = [];
+    for (const candidate of candidates) {
+      const candidateBox = nodeBounds(candidate);
+      for (const fixedNode of fixed) {
+        const fixedBox = nodeBounds(fixedNode);
+        const horizontalConflict =
+          candidateBox.x < fixedBox.x + fixedBox.width + LAYOUT_COLLISION_GAP &&
+          candidateBox.x + candidateBox.width + LAYOUT_COLLISION_GAP > fixedBox.x;
+        if (!horizontalConflict) continue;
+        forbiddenOffsets.push([
+          fixedBox.y - candidateBox.y - candidateBox.height - LAYOUT_COLLISION_GAP,
+          fixedBox.y + fixedBox.height + LAYOUT_COLLISION_GAP - candidateBox.y,
+        ]);
+      }
+    }
+    forbiddenOffsets.sort((a, b) => a[0] - b[0]);
+    const merged: [number, number][] = [];
+    for (const interval of forbiddenOffsets) {
+      const previous = merged.at(-1);
+      if (previous && interval[0] <= previous[1]) previous[1] = Math.max(previous[1], interval[1]);
+      else merged.push([...interval]);
+    }
+    const blockedAtZero = merged.find(([start, end]) => start <= 0 && end >= 0);
+    if (blockedAtZero) {
+      const offset = Math.abs(blockedAtZero[0]) <= Math.abs(blockedAtZero[1])
+        ? blockedAtZero[0] - 1
+        : blockedAtZero[1] + 1;
+      positioned.forEach((position, id) => positioned.set(id, { ...position, y: position.y + offset }));
+    }
+  }
+
+  let changed = false;
+  const next = nodes.map((node) => {
+    const position = positioned.get(node.id);
+    if (!position) return node;
+    const x = Math.round(position.x);
+    const y = Math.round(position.y);
+    if (node.x === x && node.y === y) return node;
+    changed = true;
+    return { ...node, x, y };
+  });
+  return changed ? next : nodes;
 }
 
 /** Move a node before another sibling while preserving every subtree. */

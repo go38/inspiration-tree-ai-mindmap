@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供 AI 協作區協助拆解問題與探索更多方向。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.10.0`
+- 目前產品版本：`v0.11.0`
 - 存取狀態：私人 Beta（僅限擁有者）
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -31,15 +31,24 @@ This starter does not use `wrangler.jsonc`.
 
 - `app/page.tsx`：首頁與本機草稿入口
 - `app/MindMapStudio.tsx`：心智圖與 AI 協作互動
+- `app/maps/`：登入使用者的個人地圖工作區
 - `app/globals.css`：網站視覺與響應式版面
 - `app/layout.tsx`：網站中繼資料與語言設定
 - `app/lib/mindmap.ts`：心智圖純函式（節點/歷史/匯出邏輯），與 UI 解耦以利單元測試
+- `app/lib/workspace.ts`：個人地圖所有權、建立、重新命名與封存驗證邏輯
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
 
-> `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖；
+> `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.11.0 重點
+
+- 畫布提供「智慧整理」，可整理整張圖；有子節點的節點可只整理該分支。
+- 自動布局會固定中心／分支根節點、維持左右階層方向、避開其他節點，且整次操作只建立一筆可復原紀錄。
+- `/maps` 提供身份綁定的個人地圖工作區，可建立、重新命名、複製、搜尋、封存及恢復地圖，並依最近更新排序。
+- 個人地圖以 ChatGPT 使用者 email 在伺服器端隔離；既有無擁有者共享連結維持相容。
 
 ## Workspace Auth Headers
 

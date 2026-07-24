@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { mindMaps } from "../../../../db/schema";
 import {
@@ -7,6 +7,7 @@ import {
   parseUpdatePayload,
   serializeMapData,
 } from "../../../lib/sharedMap";
+import { canAccessMap, normalizeOwnerEmail } from "../../../lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,10 @@ export async function GET(_request: Request, context: RouteContext) {
     const db = getDb();
     const [row] = await db.select().from(mindMaps).where(eq(mindMaps.id, id)).limit(1);
     if (!row) return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
+    const viewerEmail = normalizeOwnerEmail(_request.headers.get("oai-authenticated-user-email"));
+    if (!canAccessMap(row.ownerEmail, viewerEmail)) {
+      return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
+    }
 
     const map = toMapResponse(row);
     if (!map) return Response.json({ error: "心智圖資料毀損" }, { status: 500 });
@@ -64,7 +69,11 @@ export async function PUT(request: Request, context: RouteContext) {
     const db = getDb();
     const now = new Date().toISOString();
     const updatedBy = request.headers.get("oai-authenticated-user-email");
+    const viewerEmail = normalizeOwnerEmail(updatedBy);
     const newVersion = nextVersion(parsed.value.version);
+    const ownership = viewerEmail
+      ? or(isNull(mindMaps.ownerEmail), eq(mindMaps.ownerEmail, viewerEmail))
+      : isNull(mindMaps.ownerEmail);
 
     // Conditional write: only succeeds if the row still holds the base version
     // the client edited. RETURNING lets us detect a race atomically.
@@ -77,7 +86,7 @@ export async function PUT(request: Request, context: RouteContext) {
         updatedAt: now,
         updatedBy,
       })
-      .where(and(eq(mindMaps.id, id), eq(mindMaps.version, parsed.value.version)))
+      .where(and(eq(mindMaps.id, id), eq(mindMaps.version, parsed.value.version), ownership))
       .returning();
 
     if (updated.length === 1) {
@@ -87,6 +96,9 @@ export async function PUT(request: Request, context: RouteContext) {
     // No row updated: either it doesn't exist (404) or the version moved on (409).
     const [row] = await db.select().from(mindMaps).where(eq(mindMaps.id, id)).limit(1);
     if (!row) return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
+    if (!canAccessMap(row.ownerEmail, viewerEmail)) {
+      return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
+    }
 
     const current = toMapResponse(row);
     return Response.json(

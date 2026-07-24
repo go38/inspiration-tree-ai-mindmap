@@ -5,11 +5,14 @@ import test from "node:test";
 // exercised directly without a build step.
 import {
   HISTORY_LIMIT,
+  autoLayoutNodes,
   buildMarkdownLines,
   collectSubtreeIds,
   depthOf,
   nextNodeId,
   moveSiblingNode,
+  nodeBounds,
+  nodeBoundsOverlap,
   pushHistory,
   reorderSiblingNodes,
   safeFilename,
@@ -87,4 +90,70 @@ test("buildMarkdownLines preserves hierarchy, notes, and injected timestamp", ()
   assert.match(md, /第一層/); // non-empty note included
   // Branch B has an empty note, so no stray blank note line is emitted for it.
   assert.doesNotMatch(md, /### 分支 B\n\n\n/);
+});
+
+test("auto layout arranges 100 nodes without overlap and keeps hierarchy outward", () => {
+  const nodes = [
+    { id: 1, parent: null, text: "中心", note: "", x: 420, y: 300, tone: "ink" },
+  ];
+  for (let id = 2; id <= 100; id++) {
+    // Ten broad first-level branches with a deterministic, mixed-depth tree.
+    const parent = id <= 11 ? 1 : 2 + ((id - 12) % 10);
+    nodes.push({ id, parent, text: `節點 ${id}`, note: "", x: 420, y: 300, tone: id % 3 === 0 ? "sage" : id % 3 === 1 ? "sun" : "coral" });
+  }
+
+  const laidOut = autoLayoutNodes(nodes);
+  assert.notEqual(laidOut, nodes);
+  assert.deepEqual(
+    { x: laidOut[0].x, y: laidOut[0].y },
+    { x: nodes[0].x, y: nodes[0].y },
+    "center remains the layout anchor",
+  );
+
+  for (let i = 0; i < laidOut.length; i++) {
+    for (let j = i + 1; j < laidOut.length; j++) {
+      assert.equal(
+        nodeBoundsOverlap(nodeBounds(laidOut[i]), nodeBounds(laidOut[j])),
+        false,
+        `nodes ${laidOut[i].id} and ${laidOut[j].id} must not overlap`,
+      );
+    }
+  }
+
+  const byId = new Map(laidOut.map((node) => [node.id, node]));
+  for (const node of laidOut.slice(1)) {
+    const parent = byId.get(node.parent);
+    const nodeCenter = node.x + nodeBounds(node).width / 2;
+    const parentCenter = parent.x + nodeBounds(parent).width / 2;
+    const rootCenter = laidOut[0].x + nodeBounds(laidOut[0]).width / 2;
+    assert.ok(
+      nodeCenter < parentCenter || nodeCenter > parentCenter,
+      `node ${node.id} must be horizontally separated from its parent`,
+    );
+    assert.equal(
+      Math.sign(nodeCenter - rootCenter),
+      Math.sign(parentCenter - rootCenter) || Math.sign(nodeCenter - rootCenter),
+      `node ${node.id} stays on its branch side`,
+    );
+  }
+});
+
+test("branch auto layout anchors the selected root, avoids outsiders, and leaves them untouched", () => {
+  const nodes = [
+    { id: 1, parent: null, text: "中心", note: "", x: 420, y: 300, tone: "ink" },
+    { id: 2, parent: 1, text: "左分支", note: "", x: 130, y: 220, tone: "coral" },
+    { id: 3, parent: 2, text: "子節點一", note: "", x: -162, y: 220, tone: "sage" },
+    { id: 4, parent: 2, text: "子節點二", note: "", x: -162, y: 220, tone: "sun" },
+    { id: 5, parent: 1, text: "不相關分支", note: "", x: -162, y: 220, tone: "coral" },
+  ];
+
+  const laidOut = autoLayoutNodes(nodes, 2);
+  assert.deepEqual(laidOut.find((node) => node.id === 2), nodes[1], "selected branch root is anchored");
+  assert.equal(laidOut.find((node) => node.id === 5), nodes[4], "outside nodes preserve identity and position");
+
+  for (let i = 0; i < laidOut.length; i++) {
+    for (let j = i + 1; j < laidOut.length; j++) {
+      assert.equal(nodeBoundsOverlap(nodeBounds(laidOut[i]), nodeBounds(laidOut[j])), false);
+    }
+  }
 });
