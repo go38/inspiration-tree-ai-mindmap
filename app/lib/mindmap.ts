@@ -17,6 +17,22 @@ export type HistoryState = {
   selectedId: number;
 };
 
+export type HistoryShortcut = "undo" | "redo" | null;
+
+export function historyShortcutForKey(event: {
+  key: string;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  shiftKey?: boolean;
+  altKey?: boolean;
+}): HistoryShortcut {
+  if ((!event.metaKey && !event.ctrlKey) || event.altKey) return null;
+  const key = event.key.toLowerCase();
+  if (key === "z") return event.shiftKey ? "redo" : "undo";
+  if (key === "y" && event.ctrlKey && !event.metaKey) return "redo";
+  return null;
+}
+
 /** Newest history depth kept for undo/redo (HIS-04: at least 15 states). */
 export const HISTORY_LIMIT = 15;
 

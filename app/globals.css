@@ -228,7 +228,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 /* Cloud sync status dot + conflict banner + shared-map notice view */
 .status-dot.saving { background:var(--sun); box-shadow:0 0 0 3px #f6eecd; }
 .status-dot.saved { background:var(--sage); box-shadow:0 0 0 3px #e7eee2; }
+.status-dot.offline { background:#d8ad44; box-shadow:0 0 0 3px #f6eecd; }
 .status-dot.conflict,.status-dot.error { background:var(--coral); box-shadow:0 0 0 3px #fbe3dd; }
+.app-shell.has-banner .workspace { height:calc(100vh - 124px); min-height:556px; }
+.sync-banner { min-height:48px; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 18px; border-bottom:1px solid #dfc783; background:#fff5d8; color:#665528; font-size:10px; }
+.sync-banner.error { border-color:#eeb9ad; background:#fbe3dd; color:#7a2f21; }
+.sync-banner span { display:flex; flex-wrap:wrap; justify-content:center; gap:4px 8px; line-height:1.4; }
+.sync-banner strong { font-size:11px; }
+.sync-banner button { min-height:31px; flex:0 0 auto; padding:0 11px; border:1px solid currentColor; border-radius:8px; background:var(--warm-white); color:inherit; font-size:10px; font-weight:700; cursor:pointer; }
+.sync-banner button:hover { background:white; }
 .conflict-banner { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; padding:10px 22px; background:#fbe3dd; border-bottom:1px solid #eeb9ad; color:#7a2f21; font-size:12px; }
 .conflict-actions { display:flex; gap:8px; }
 .conflict-actions button { height:32px; padding:0 12px; border:1px solid #d8a99d; border-radius:9px; background:var(--warm-white); color:#7a2f21; font-weight:650; font-size:11px; cursor:pointer; }
@@ -289,6 +297,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .workspace-notice a { display:inline-block; margin-top:18px; padding:10px 14px; border-radius:9px; background:var(--ink); color:white; font-size:11px; font-weight:700; text-decoration:none; }
 
 @media (max-width:700px) {
+  .app-shell.has-banner .workspace{height:calc(100vh - 134px);min-height:626px}.sync-banner{min-height:58px;justify-content:space-between;padding-inline:12px}.sync-banner span{display:block}.sync-banner strong{display:block;margin-bottom:2px}
   .workspace-topbar{grid-template-columns:1fr auto;padding-inline:16px}.workspace-topbar>div{display:none}.workspace-back{font-size:10px}
   .workspace-content{width:min(100% - 24px,940px);padding-top:32px}.workspace-heading{align-items:start}.workspace-heading h1{font-size:25px}.workspace-heading p{max-width:220px;font-size:10px}.workspace-create{padding:0 12px}
   .workspace-create-form{grid-template-columns:1fr auto}.workspace-create-form label{grid-column:1/-1}.workspace-create-form input{grid-column:1/-1}

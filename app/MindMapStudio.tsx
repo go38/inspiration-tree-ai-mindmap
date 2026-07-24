@@ -8,6 +8,7 @@ import {
   collectSubtreeIds,
   createCurvedRibbon,
   depthOf,
+  historyShortcutForKey,
   moveSiblingNode,
   nextNodeId,
   nodeBounds,
@@ -18,7 +19,16 @@ import {
   type NodeItem,
 } from "./lib/mindmap";
 import { initialNodes } from "./lib/sampleMap";
-import { clearDraft, loadDocumentTitle, loadDraft, saveDocumentTitle, saveDraft } from "./lib/storage";
+import {
+  clearCloudDraft,
+  clearDraft,
+  loadCloudDraft,
+  loadDocumentTitle,
+  loadDraft,
+  saveCloudDraft,
+  saveDocumentTitle,
+  saveDraft,
+} from "./lib/storage";
 import { type AiSuggestion } from "./lib/ai";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
@@ -78,7 +88,7 @@ type ServerMap = {
   updatedBy: string | null;
 };
 
-type SyncState = "idle" | "saving" | "saved" | "conflict" | "error";
+type SyncState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 type ViewMode = "canvas" | "outline";
 
 const MIN_ZOOM = 50;
@@ -88,6 +98,7 @@ const SYNC_LABEL: Record<SyncState, string> = {
   idle: "雲端共享",
   saving: "儲存中…",
   saved: "已同步",
+  offline: "離線草稿",
   conflict: "版本衝突",
   error: "儲存失敗",
 };
@@ -114,6 +125,7 @@ export default function MindMapStudio({
   const [suggestionRound, setSuggestionRound] = useState(0);
   const [persisted, setPersisted] = useState(false);
   const [sync, setSync] = useState<SyncState>("idle");
+  const [draftRecovered, setDraftRecovered] = useState(false);
   const [conflict, setConflict] = useState<ServerMap | null>(null);
   const [sharing, setSharing] = useState(false);
   const [documentTitle, setDocumentTitle] = useState(persistence.mode === "cloud" ? persistence.title : "我的理想生活");
@@ -142,6 +154,17 @@ export default function MindMapStudio({
   const hydrated = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const version = useRef(persistence.mode === "cloud" ? persistence.version : 1);
+  const nodesRef = useRef(nodes);
+  const selectedIdRef = useRef(selectedId);
+  const documentTitleRef = useRef(documentTitle);
+  const editRevision = useRef(0);
+  const syncInFlight = useRef(false);
+  const syncQueued = useRef(false);
+  const needsCloudSync = useRef(false);
+  const skipNextAutosave = useRef(false);
+  nodesRef.current = nodes;
+  selectedIdRef.current = selectedId;
+  documentTitleRef.current = documentTitle;
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const fallbackSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
@@ -191,12 +214,44 @@ export default function MindMapStudio({
 
   async function saveToCloud() {
     if (persistence.mode !== "cloud") return;
+    if (syncInFlight.current) {
+      syncQueued.current = true;
+      return;
+    }
+
+    const snapshot = {
+      title: documentTitleRef.current,
+      nodes: nodesRef.current,
+      selectedId: selectedIdRef.current,
+      baseVersion: version.current,
+      revision: editRevision.current,
+    };
+    const protectedLocally = saveCloudDraft(
+      persistence.mapId,
+      snapshot.title,
+      snapshot.nodes,
+      snapshot.selectedId,
+      snapshot.baseVersion,
+    );
+    needsCloudSync.current = true;
+    if (!window.navigator.onLine) {
+      setSync(protectedLocally ? "offline" : "error");
+      return;
+    }
+
+    syncInFlight.current = true;
+    syncQueued.current = false;
     setSync("saving");
+    let saved = false;
     try {
       const response = await fetch(`/api/maps/${persistence.mapId}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: documentTitle, version: version.current, nodes }),
+        body: JSON.stringify({
+          title: snapshot.title,
+          version: snapshot.baseVersion,
+          nodes: snapshot.nodes,
+        }),
       });
       if (response.status === 409) {
         const data = (await response.json()) as { current: ServerMap | null };
@@ -210,9 +265,22 @@ export default function MindMapStudio({
       }
       const data = (await response.json()) as { version: number };
       version.current = data.version;
-      setSync("saved");
+      saved = true;
+      if (editRevision.current === snapshot.revision) {
+        clearCloudDraft(persistence.mapId);
+        needsCloudSync.current = false;
+        setDraftRecovered(false);
+        setSync("saved");
+      } else {
+        syncQueued.current = true;
+      }
     } catch {
       setSync("error");
+    } finally {
+      syncInFlight.current = false;
+      const shouldSaveNewestRevision = saved && syncQueued.current;
+      syncQueued.current = false;
+      if (shouldSaveNewestRevision) void saveToCloud();
     }
   }
 
@@ -224,9 +292,26 @@ export default function MindMapStudio({
   // loaded page never overwrites the source of truth on mount.
   useEffect(() => {
     if (!hydrated.current) return;
+    if (skipNextAutosave.current) {
+      skipNextAutosave.current = false;
+      return;
+    }
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-    setSync("saving");
-    if (!isCloud) setPersisted(false);
+    if (persistence.mode === "cloud") {
+      editRevision.current += 1;
+      needsCloudSync.current = true;
+      const protectedLocally = saveCloudDraft(
+        persistence.mapId,
+        documentTitle,
+        nodes,
+        selectedId,
+        version.current,
+      );
+      setSync(protectedLocally ? window.navigator.onLine ? "saving" : "offline" : "error");
+    } else {
+      setSync("saving");
+      setPersisted(false);
+    }
     const delay = isCloud ? 800 : 400;
     saveTimer.current = window.setTimeout(() => {
       if (persistence.mode === "cloud") {
@@ -243,8 +328,8 @@ export default function MindMapStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentTitle, nodes, selectedId]);
 
-  // Local mode restores its draft once after mount (cloud data comes from the
-  // server props, so there is nothing to restore there).
+  // Local maps restore their regular draft. Cloud maps restore only a
+  // previously unsynchronised, map-specific safety copy.
   useEffect(() => {
     if (persistence.mode === "local") {
       const draft = loadDraft();
@@ -255,10 +340,52 @@ export default function MindMapStudio({
       }
       const savedTitle = loadDocumentTitle();
       if (savedTitle) setDocumentTitle(savedTitle);
+    } else {
+      const draft = loadCloudDraft(persistence.mapId);
+      if (draft) {
+        setNodes(draft.nodes);
+        setSelectedId(draft.selectedId);
+        setDocumentTitle(draft.title);
+        version.current = draft.baseVersion;
+        needsCloudSync.current = true;
+        setDraftRecovered(true);
+        setSync(window.navigator.onLine ? "error" : "offline");
+      }
     }
     hydrated.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (persistence.mode !== "cloud") return;
+    const protectCurrentDraft = () => {
+      if (!needsCloudSync.current) return;
+      saveCloudDraft(
+        persistence.mapId,
+        documentTitleRef.current,
+        nodesRef.current,
+        selectedIdRef.current,
+        version.current,
+      );
+    };
+    const onOffline = () => {
+      protectCurrentDraft();
+      if (needsCloudSync.current) setSync("offline");
+    };
+    const onOnline = () => {
+      if (needsCloudSync.current) void saveToCloud();
+    };
+    window.addEventListener("pagehide", protectCurrentDraft);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("pagehide", protectCurrentDraft);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+    };
+    // Event handlers read the latest editor state through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistence]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   function resetToSample() {
@@ -300,6 +427,10 @@ export default function MindMapStudio({
     setNodes(conflict.nodes);
     setSelectedId(roots[0]?.id ?? conflict.nodes[0]?.id ?? 1);
     version.current = conflict.version;
+    if (persistence.mode === "cloud") clearCloudDraft(persistence.mapId);
+    needsCloudSync.current = false;
+    skipNextAutosave.current = true;
+    setDraftRecovered(false);
     setConflict(null);
     setSync("saved");
     flashToast("已載入最新版本");
@@ -693,6 +824,15 @@ export default function MindMapStudio({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      const isTextEditing = Boolean(target?.closest("input, textarea, [contenteditable='true']"));
+      if (!isTextEditing) {
+        const historyShortcut = historyShortcutForKey(event);
+        if (historyShortcut) {
+          event.preventDefault();
+          if (historyShortcut === "undo") undo(); else redo();
+          return;
+        }
+      }
       if (target?.closest("input, textarea, button, [contenteditable='true']")) return;
       if (editingId !== null) {
         if (event.key === "Escape") cancelEdit();
@@ -720,7 +860,7 @@ export default function MindMapStudio({
     : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${conflict || (isCloud && (sync === "offline" || sync === "error")) ? "has-banner" : ""}`}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
         <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} aria-label={`修改標題：${documentTitle}`}>{documentTitle}<span aria-hidden="true">✎</span></button>} <span className="saved">{statusLabel}</span></div>
@@ -752,6 +892,18 @@ export default function MindMapStudio({
         </div>
       )}
 
+      {isCloud && (sync === "offline" || sync === "error") && (
+        <div className={`sync-banner ${sync}`} role="status">
+          <span>
+            <strong>{sync === "offline" ? "目前離線" : draftRecovered ? "已復原未同步草稿" : "同步失敗"}</strong>
+            {sync === "offline"
+              ? "變更已安全保存在這台裝置，恢復連線後會自動重試。"
+              : "變更已安全保存在這台裝置，可立即重新同步。"}
+          </span>
+          <button onClick={() => void saveToCloud()}>重新同步</button>
+        </div>
+      )}
+
       <section className="workspace">
         <nav className="toolrail" aria-label="心智圖工具">
           <button className="tool" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點">
@@ -761,10 +913,10 @@ export default function MindMapStudio({
             <span aria-hidden="true">−</span>
           </button>
           <span className="tool-divider" aria-hidden="true" />
-          <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原上一步" disabled={!history.length}>
+          <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!history.length}>
             <span aria-hidden="true">↶</span>
           </button>
-          <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做上一步" disabled={!future.length}>
+          <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做 · ⇧⌘Z/Ctrl Y" disabled={!future.length}>
             <span aria-hidden="true">↷</span>
           </button>
           <span className="tool-divider" aria-hidden="true" />

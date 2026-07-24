@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供 AI 協作區協助拆解問題與探索更多方向。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.11.1`
+- 目前產品版本：`v0.12.0`
 - 存取狀態：私人 Beta（僅限擁有者）
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -42,6 +42,12 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.12.0 重點
+
+- 支援 `Cmd/Ctrl+Z` 復原，以及 `Cmd/Ctrl+Shift+Z`、`Ctrl+Y` 重做；文字輸入框維持瀏覽器原生復原行為。
+- 雲端同步失敗或離線時，未同步內容會先保存為地圖專屬的裝置草稿。
+- 重新連線後會自動重試，也可從狀態提示手動重新同步；重開頁面可復原未同步草稿。
 
 ## v0.11.1 重點
 

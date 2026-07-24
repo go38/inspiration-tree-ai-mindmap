@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseDraft, serializeDraft } from "../app/lib/storage.ts";
+import { parseCloudDraft, parseDraft, serializeCloudDraft, serializeDraft } from "../app/lib/storage.ts";
 
 function sampleNodes() {
   return [
@@ -50,4 +50,24 @@ test("parseDraft repairs a selectedId that points at a missing node", () => {
   const draft = parseDraft(JSON.stringify({ version: 1, nodes: sampleNodes(), selectedId: 999 }));
   assert.ok(draft);
   assert.equal(draft.selectedId, 1); // falls back to the center node
+});
+
+test("cloud drafts round-trip with map, version, title, and timestamp metadata", () => {
+  const nodes = sampleNodes();
+  const raw = serializeCloudDraft("map-123", " 離線企劃 ", nodes, 2, 7, "2026-07-24T08:00:00.000Z");
+  const draft = parseCloudDraft(raw, "map-123");
+  assert.ok(draft);
+  assert.equal(draft.mapId, "map-123");
+  assert.equal(draft.title, "離線企劃");
+  assert.equal(draft.baseVersion, 7);
+  assert.equal(draft.updatedAt, "2026-07-24T08:00:00.000Z");
+  assert.equal(draft.selectedId, 2);
+  assert.deepEqual(draft.nodes, nodes);
+});
+
+test("parseCloudDraft rejects invalid or mismatched cloud drafts", () => {
+  const valid = serializeCloudDraft("map-123", "標題", sampleNodes(), 1, 2, "2026-07-24T08:00:00.000Z");
+  assert.equal(parseCloudDraft(valid, "another-map"), null);
+  assert.equal(parseCloudDraft(JSON.stringify({ version: 1, mapId: "map-123" }), "map-123"), null);
+  assert.equal(parseCloudDraft(valid.replace('"baseVersion":2', '"baseVersion":0'), "map-123"), null);
 });

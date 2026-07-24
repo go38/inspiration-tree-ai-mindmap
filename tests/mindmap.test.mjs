@@ -9,6 +9,7 @@ import {
   buildMarkdownLines,
   collectSubtreeIds,
   depthOf,
+  historyShortcutForKey,
   nextNodeId,
   moveSiblingNode,
   nodeBounds,
@@ -78,6 +79,15 @@ test("pushHistory keeps at most HISTORY_LIMIT states, newest last", () => {
   assert.equal(history.length, HISTORY_LIMIT);
   assert.equal(history.at(-1).selectedId, HISTORY_LIMIT + 4); // newest retained
   assert.equal(history[0].selectedId, 5); // oldest dropped
+});
+
+test("history shortcuts support macOS and Windows conventions", () => {
+  assert.equal(historyShortcutForKey({ key: "z", metaKey: true }), "undo");
+  assert.equal(historyShortcutForKey({ key: "Z", metaKey: true, shiftKey: true }), "redo");
+  assert.equal(historyShortcutForKey({ key: "z", ctrlKey: true }), "undo");
+  assert.equal(historyShortcutForKey({ key: "y", ctrlKey: true }), "redo");
+  assert.equal(historyShortcutForKey({ key: "z" }), null);
+  assert.equal(historyShortcutForKey({ key: "z", ctrlKey: true, altKey: true }), null);
 });
 
 test("buildMarkdownLines preserves hierarchy, notes, and injected timestamp", () => {
