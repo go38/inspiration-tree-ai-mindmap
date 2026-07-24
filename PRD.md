@@ -2,7 +2,7 @@
 
 > 文件版本：3.2
 > 更新日期：2026-07-24
-> 產品版本：v0.11.0
+> 產品版本：v0.11.1
 > 產品狀態：私人 Beta，僅限擁有者存取
 > 正式網址：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
 
