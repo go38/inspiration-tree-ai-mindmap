@@ -174,7 +174,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .zoom-control { position:absolute; z-index:4; bottom:18px; left:18px; height:44px; display:flex; align-items:center; border:1px solid var(--line); border-radius:12px; background:var(--warm-white); box-shadow:0 4px 12px rgba(48,42,31,.08); }
 .zoom-control button { width:42px; height:100%; font-size:21px; font-weight:700; }
 .zoom-control span { width:54px; text-align:center; font-size:11px; font-weight:650; color:var(--muted); border-left:1px solid var(--line); border-right:1px solid var(--line); }
-.ai-panel { min-width:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:#fffcf7; }
+.ai-panel { min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; border-left:1px solid var(--line); background:#fffcf7; }
 .ai-header { width:100%; height:76px; flex:0 0 76px; padding:0 18px; display:flex; align-items:center; gap:11px; border:0; border-bottom:1px solid var(--line); background:transparent; text-align:left; cursor:default; }
 .ai-orb { width:38px; height:38px; display:grid; place-items:center; border-radius:50%; background:var(--coral); color:white; box-shadow:0 0 0 5px #fae5df; font-size:18px; }
 .ai-header > div:nth-child(2) { display:grid; gap:2px; }
@@ -182,7 +182,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .ai-header small { color:#8d867c; font-size:9px; }
 .online { margin-left:auto; padding:5px 8px; background:#e7eee2; color:#58704f; border-radius:20px; font:600 8px var(--font-sans)!important; }
 .sheet-handle { display:none; }
-.ai-content { flex:1; overflow:auto; padding:20px 18px 28px; }
+.ai-content { min-height:0; flex:1 1 auto; overflow-x:hidden; overflow-y:scroll; overscroll-behavior-y:contain; scrollbar-gutter:stable; scrollbar-width:thin; scrollbar-color:#b8aea0 #eee8dd; padding:20px 18px 40px; }
+.ai-content::-webkit-scrollbar { width:10px; }
+.ai-content::-webkit-scrollbar-track { background:#eee8dd; border-radius:10px; }
+.ai-content::-webkit-scrollbar-thumb { min-height:36px; border:2px solid #eee8dd; border-radius:10px; background:#b8aea0; }
+.ai-content::-webkit-scrollbar-thumb:hover { background:#93887a; }
 .eyebrow { margin:0 0 8px; color:#978f83; font-size:9px; font-weight:700; letter-spacing:.13em; }
 .focus-card { display:flex; gap:11px; align-items:center; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
 .focus-dot { width:9px; height:9px; margin-top:4px; border-radius:50%; background:var(--coral); }
@@ -226,7 +230,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .suggestions { display:grid; gap:8px; }
 .suggestions { animation:suggestions-in .2s ease; }
 @keyframes suggestions-in { from{opacity:.35;transform:translateY(3px)} }
-.suggestion { width:100%; padding:14px 12px; display:grid; grid-template-columns:1fr 30px; gap:10px; align-items:center; text-align:left; background:white; border:1px solid #e4ded3; border-radius:12px; cursor:pointer; transition:.17s; }
+.suggestion { width:100%; padding:14px 12px; display:grid; grid-template-columns:1fr 30px; gap:10px; align-items:center; text-align:left; background:white; border:1px solid #e4ded3; border-radius:12px; cursor:pointer; scroll-margin-block:12px 72px; transition:.17s; }
 .suggestion:hover { border-color:var(--coral); transform:translateX(-2px); box-shadow:3px 3px 0 #f5d9d2; }
 .suggestion.added { border-color:#b7c8af; background:#f7faf4; cursor:default; }
 .suggestion.added:hover { border-color:#b7c8af; transform:none; box-shadow:none; }
@@ -339,7 +343,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
   .ai-backdrop{display:block;position:fixed;z-index:18;inset:76px 0 0 60px;border:0;background:rgba(33,31,26,.28)}
   .ai-panel{position:fixed;z-index:20;left:60px;right:0;bottom:0;width:auto;height:min(72vh,650px);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;box-shadow:0 -12px 38px rgba(33,31,26,.2);overflow:hidden;transform:translateY(calc(100% - 66px));transition:transform .25s ease}
   .ai-panel.mobile-open{transform:translateY(0)}.ai-header{height:66px;flex-basis:66px;padding:0 14px;cursor:pointer}.sheet-handle{display:inline!important;margin-left:4px;color:var(--muted);font:700 16px var(--font-sans)!important;transition:transform .2s}.ai-panel.mobile-open .sheet-handle{transform:rotate(180deg)}
-  .ai-content{padding:15px 14px 12px}.prompt-box{padding:11px 14px 13px}.suggestion{min-height:62px}.add-suggestion{width:32px;height:32px}.suggestion-heading button{min-height:36px;padding:0 6px}.quick-row button{min-height:36px;font-size:9px}
+  .ai-content{padding:15px 10px 38px 14px}.prompt-box{padding:11px 14px 13px}.suggestion{min-height:62px;scroll-margin-bottom:84px}.add-suggestion{width:32px;height:32px}.suggestion-heading button{min-height:36px;padding:0 6px}.quick-row button{min-height:36px;font-size:9px}
   .outline-view{padding:62px 10px 80px}.outline-view>header{align-items:start}.outline-view>header strong{display:none}.outline-row{gap:4px;padding-right:7px}.outline-actions{flex:0 0 85px}.outline-actions .transplant-outline-button,.outline-actions .edit-outline-button,.outline-actions .add-child-button{display:none}.outline-actions .reorder-button,.outline-actions .structure-button{display:inline-block;width:40px;min-height:40px}.outline-drag-handle{display:none}.outline-editor{grid-template-columns:1fr auto}.outline-editor input:nth-child(2){grid-column:1/-1}.outline-copy span{max-width:120px}
   .transplant-modal{padding:20px}.transplant-modal h2{font-size:18px}.transplant-modal footer button{min-height:44px;flex:1}
   .mind-node{padding-bottom:39px}.mind-node.level-root{height:94px}.mind-node.level-branch{height:82px}.mind-node.level-detail{width:152px;height:70px;padding-bottom:34px}.mind-node .node-actions{right:7px;bottom:6px;padding:2px;border-radius:18px;box-shadow:none}.mind-node .node-actions button{width:28px;height:28px;font-size:13px}.mind-node.level-detail .node-actions button{width:24px;height:24px;font-size:12px}.branch-collapse-toggle{top:-24px;min-height:44px;padding-inline:11px;font-size:10px}

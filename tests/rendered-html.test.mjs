@@ -60,10 +60,11 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState] = await Promise.all([
+  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/maps/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/maps/MapWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -117,6 +118,9 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /data-testid="ai-expand-all"/);
   assert.match(studio, /data-testid="concept-explanation"/);
   assert.match(studio, /data-testid="apply-explanation-note"/);
+  assert.match(globals, /\.ai-panel\s*\{[^}]*min-height:0[^}]*overflow:hidden/);
+  assert.match(globals, /\.ai-content\s*\{[^}]*min-height:0[^}]*overflow-y:scroll[^}]*scrollbar-gutter:stable/);
+  assert.match(globals, /\.ai-content::-webkit-scrollbar-thumb/);
   assert.doesNotMatch(studio, /AI_MODE_LABELS|多節點上下文|過去討論|預覽加入/);
   assert.match(studio, /saveDocumentTitle/);
   assert.match(studio, /href="\/maps"/);
