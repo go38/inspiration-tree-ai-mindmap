@@ -7,6 +7,7 @@ import {
   autoLayoutNodes,
   buildDepthMap,
   buildMarkdownLines,
+  calculateAnchoredZoom,
   calculateFitTransform,
   collectSubtreeIds,
   createCanvasBranchRibbons,
@@ -111,6 +112,10 @@ type SyncState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 type ViewMode = "canvas" | "tree" | "outline";
 type AiAssistantMode = "expand" | "explain";
 type PointerPosition = { clientX: number; clientY: number };
+type PinchGesture = {
+  lastDistance: number;
+  lastCenter: PointerPosition;
+};
 type NodeDrag = {
   id: number;
   pointerId: number;
@@ -205,6 +210,10 @@ export default function MindMapStudio({
   const panDrag = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const pointerFrame = useRef<number | null>(null);
   const pendingPointer = useRef<PointerPosition | null>(null);
+  const viewportFrame = useRef<number | null>(null);
+  const pendingViewport = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+  const touchPointers = useRef<Map<number, PointerPosition>>(new Map());
+  const pinchGesture = useRef<PinchGesture | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const commandBarRef = useRef<HTMLDivElement | null>(null);
   const zoomControlRef = useRef<HTMLDivElement | null>(null);
@@ -217,6 +226,9 @@ export default function MindMapStudio({
   const nodesRef = useRef(nodes);
   const selectedIdRef = useRef(selectedId);
   const documentTitleRef = useRef(documentTitle);
+  const zoomRef = useRef(zoom);
+  const stageOffsetRef = useRef(stageOffset);
+  const stagePanRef = useRef(stagePan);
   const editRevision = useRef(0);
   const syncInFlight = useRef(false);
   const syncQueued = useRef(false);
@@ -227,6 +239,11 @@ export default function MindMapStudio({
     selectedIdRef.current = selectedId;
     documentTitleRef.current = documentTitle;
   }, [documentTitle, nodes, selectedId]);
+  useEffect(() => {
+    zoomRef.current = zoom;
+    stageOffsetRef.current = stageOffset;
+    stagePanRef.current = stagePan;
+  }, [stageOffset, stagePan, zoom]);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const inboxScope = persistence.mode === "cloud" ? persistence.mapId : "local";
   const viewStateScope = inboxScope;
@@ -530,6 +547,7 @@ export default function MindMapStudio({
 
   useEffect(() => () => {
     if (pointerFrame.current !== null) window.cancelAnimationFrame(pointerFrame.current);
+    if (viewportFrame.current !== null) window.cancelAnimationFrame(viewportFrame.current);
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -891,6 +909,9 @@ export default function MindMapStudio({
         targetYRatio: mode === "tree" ? .82 : .5,
       },
     );
+    zoomRef.current = fit.zoom;
+    stageOffsetRef.current = fit.offset;
+    stagePanRef.current = { x: 0, y: 0 };
     setZoom(fit.zoom);
     setStageOffset(fit.offset);
     setStagePan({ x: 0, y: 0 });
@@ -979,10 +1000,12 @@ export default function MindMapStudio({
   function applyPointerPosition(position: PointerPosition) {
     const activePan = panDrag.current;
     if (activePan) {
-      setStagePan({
+      const nextPan = {
         x: activePan.originX + position.clientX - activePan.startX,
         y: activePan.originY + position.clientY - activePan.startY,
-      });
+      };
+      stagePanRef.current = nextPan;
+      setStagePan(nextPan);
       return;
     }
     const activeDrag = drag.current;
@@ -1022,8 +1045,136 @@ export default function MindMapStudio({
     });
   }
 
+  function queueViewportUpdate(nextZoom: number, nextPan: { x: number; y: number }) {
+    const next = { zoom: nextZoom, pan: nextPan };
+    pendingViewport.current = next;
+    zoomRef.current = nextZoom;
+    stagePanRef.current = nextPan;
+    if (viewportFrame.current !== null) return;
+    viewportFrame.current = window.requestAnimationFrame(() => {
+      viewportFrame.current = null;
+      const pending = pendingViewport.current;
+      pendingViewport.current = null;
+      if (!pending) return;
+      setZoom(pending.zoom);
+      setStagePan(pending.pan);
+    });
+  }
+
+  function zoomAtClientPoint(
+    nextZoom: number,
+    anchor: PointerPosition,
+    anchorShift = { x: 0, y: 0 },
+  ) {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect || viewMode === "outline") return;
+    const clampedZoom = Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom)) * 10) / 10;
+    if (clampedZoom === zoomRef.current && anchorShift.x === 0 && anchorShift.y === 0) return;
+    const offset = stageOffsetRef.current;
+    const pan = stagePanRef.current;
+    const anchored = calculateAnchoredZoom(
+      zoomRef.current,
+      clampedZoom,
+      { x: anchor.clientX, y: anchor.clientY },
+      { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+      { x: offset.x + pan.x, y: offset.y + pan.y },
+    );
+    const nextTotalOffset = {
+      x: anchored.totalOffset.x + anchorShift.x,
+      y: anchored.totalOffset.y + anchorShift.y,
+    };
+    queueViewportUpdate(clampedZoom, {
+      x: nextTotalOffset.x - offset.x,
+      y: nextTotalOffset.y - offset.y,
+    });
+  }
+
+  function zoomFromControls(delta: number) {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    zoomAtClientPoint(zoomRef.current + delta, {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    });
+  }
+
+  function onCanvasWheel(event: React.WheelEvent<HTMLDivElement>) {
+    if (viewMode === "outline") return;
+    const target = event.target as HTMLElement;
+    if (target.closest(".canvas-commandbar, .zoom-control, .node-editor")) return;
+    event.preventDefault();
+    const modeMultiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? event.currentTarget.clientHeight : 1;
+    const pixelDelta = Math.max(-240, Math.min(240, event.deltaY * modeMultiplier));
+    const nextZoom = zoomRef.current * Math.exp(-pixelDelta * .002);
+    zoomAtClientPoint(nextZoom, { clientX: event.clientX, clientY: event.clientY });
+  }
+
+  function touchPair() {
+    return [...touchPointers.current.values()].slice(0, 2);
+  }
+
+  function touchPairMetrics(points: PointerPosition[]) {
+    const [first, second] = points;
+    return {
+      distance: Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY),
+      center: {
+        clientX: (first.clientX + second.clientX) / 2,
+        clientY: (first.clientY + second.clientY) / 2,
+      },
+    };
+  }
+
+  function onCanvasPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== "touch" || viewMode === "outline") return;
+    touchPointers.current.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+    if (touchPointers.current.size !== 2) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (pointerFrame.current !== null) window.cancelAnimationFrame(pointerFrame.current);
+    pointerFrame.current = null;
+    pendingPointer.current = null;
+    const activeDrag = drag.current;
+    if (activeDrag?.mode === "canvas" && activeDrag.moved && activeDrag.before) {
+      setHistory((items) => pushHistory(items, activeDrag.before!));
+      setFuture([]);
+    }
+    drag.current = null;
+    panDrag.current = null;
+    setDraggingId(null);
+    setPanning(false);
+    const metrics = touchPairMetrics(touchPair());
+    pinchGesture.current = { lastDistance: metrics.distance, lastCenter: metrics.center };
+  }
+
+  function onCanvasPointerMoveCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== "touch" || !touchPointers.current.has(event.pointerId)) return;
+    touchPointers.current.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+    const gesture = pinchGesture.current;
+    if (!gesture || touchPointers.current.size < 2) return;
+    event.preventDefault();
+    const metrics = touchPairMetrics(touchPair());
+    if (gesture.lastDistance <= 0 || metrics.distance <= 0) return;
+    const nextZoom = zoomRef.current * (metrics.distance / gesture.lastDistance);
+    zoomAtClientPoint(
+      nextZoom,
+      gesture.lastCenter,
+      {
+        x: metrics.center.clientX - gesture.lastCenter.clientX,
+        y: metrics.center.clientY - gesture.lastCenter.clientY,
+      },
+    );
+    gesture.lastDistance = metrics.distance;
+    gesture.lastCenter = metrics.center;
+  }
+
+  function onCanvasPointerEndCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== "touch") return;
+    touchPointers.current.delete(event.pointerId);
+    if (touchPointers.current.size < 2) pinchGesture.current = null;
+  }
+
   function beginCanvasPan(event: React.PointerEvent<HTMLDivElement>) {
-    if (viewMode === "outline" || event.button !== 0) return;
+    if (viewMode === "outline" || event.button !== 0 || touchPointers.current.size > 1) return;
     const target = event.target as HTMLElement;
     if (target.closest(".mind-node, .canvas-commandbar, .zoom-control")) return;
     event.preventDefault();
@@ -1052,7 +1203,7 @@ export default function MindMapStudio({
   }
 
   function beginNodeDrag(event: React.PointerEvent<HTMLElement>, node: NodeItem) {
-    if (editingId === node.id || event.button !== 0) return;
+    if (editingId === node.id || event.button !== 0 || touchPointers.current.size > 1) return;
     event.preventDefault();
     event.stopPropagation();
     setSelectedId(node.id);
@@ -1472,7 +1623,22 @@ export default function MindMapStudio({
           </div>
         </aside>
 
-        <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${viewMode === "tree" ? "tree-active" : ""} ${panning ? "panning" : ""} ${draggingId !== null ? "dragging-node" : ""}`} onPointerDown={beginCanvasPan} onPointerMove={onPointerMove} onPointerUp={endPointerInteraction} onPointerCancel={endPointerInteraction}>
+        <div
+          ref={canvasRef}
+          className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${viewMode === "tree" ? "tree-active" : ""} ${panning ? "panning" : ""} ${draggingId !== null ? "dragging-node" : ""}`}
+          role="region"
+          aria-label="心智圖畫布，可拖曳平移、使用滑鼠滾輪或雙指縮放"
+          data-testid="mind-map-canvas"
+          onWheel={onCanvasWheel}
+          onPointerDownCapture={onCanvasPointerDownCapture}
+          onPointerMoveCapture={onCanvasPointerMoveCapture}
+          onPointerUpCapture={onCanvasPointerEndCapture}
+          onPointerCancelCapture={onCanvasPointerEndCapture}
+          onPointerDown={beginCanvasPan}
+          onPointerMove={onPointerMove}
+          onPointerUp={endPointerInteraction}
+          onPointerCancel={endPointerInteraction}
+        >
           <div ref={commandBarRef} className="canvas-commandbar">
             <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => selectViewMode("canvas")}>心智圖</button><button className={viewMode === "tree" ? "active" : ""} onClick={() => selectViewMode("tree")}>樹狀</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => selectViewMode("outline")}>大綱</button></div>
             <label className="node-search"><span aria-hidden="true">⌕</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜尋節點" aria-label="搜尋節點" /></label>
@@ -1480,7 +1646,7 @@ export default function MindMapStudio({
             <button className="fit-button" onClick={fitToView}>適合畫面</button>
           </div>
           {viewMode !== "outline" ? <>
-          <div className="canvas-hint">{viewMode === "tree" ? "拖曳空白處平移 · 拖曳節點微調樹冠 · 雙擊編輯" : "拖曳空白處平移 · 拖曳節點整理 · 雙擊編輯"}</div>
+          <div className="canvas-hint">{viewMode === "tree" ? "拖曳平移 · 滾輪／雙指縮放 · 拖曳節點微調樹冠" : "拖曳平移 · 滾輪／雙指縮放 · 拖曳節點整理"}</div>
           <div className="map-stage" style={{ transform: `translate(${stageOffset.x + stagePan.x}px, ${stageOffset.y + stagePan.y}px) scale(${zoom / 100})` }}>
             <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
               {viewMode === "tree" && <defs>{connections.map((line) => (
@@ -1540,7 +1706,7 @@ export default function MindMapStudio({
               </article>
             );})}
           </div>
-          <div ref={zoomControlRef} className="zoom-control"><button onClick={() => setZoom(Math.max(MIN_ZOOM, zoom - 10))} aria-label="縮小，最低 10%" title="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + 10))} aria-label="放大，最高 200%" title="放大">＋</button><button onClick={fitToView} aria-label="適合畫面" title="適合畫面">◎</button></div>
+          <div ref={zoomControlRef} className="zoom-control"><button onClick={() => zoomFromControls(-10)} aria-label="縮小，最低 10%" title="縮小">−</button><span>{Math.round(zoom)}%</span><button onClick={() => zoomFromControls(10)} aria-label="放大，最高 200%" title="放大">＋</button><button onClick={fitToView} aria-label="適合畫面" title="適合畫面">◎</button></div>
           </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>拖曳同層排序；使用縮排／凸排調整分支層級</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
             const hasChildren = nodes.some((item) => item.parent === node.id);
             const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);

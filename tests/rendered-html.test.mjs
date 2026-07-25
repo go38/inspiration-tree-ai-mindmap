@@ -50,7 +50,7 @@ test("server-renders the mind map studio", async () => {
   assert.match(html, /智慧整理打造理想生活分支/);
   assert.match(html, /移植身心健康分支/);
   assert.match(html, /適合畫面/);
-  assert.match(html, /拖曳空白處平移/);
+  assert.match(html, /滾輪／雙指縮放/);
   assert.match(html, /想往哪個方向延伸？/);
   assert.match(html, /修改標題：我的理想生活/);
 
@@ -102,6 +102,11 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /const MIN_ZOOM = 10/);
   assert.match(studio, /const MAX_ZOOM = 200/);
   assert.match(studio, /calculateFitTransform/);
+  assert.match(studio, /calculateAnchoredZoom/);
+  assert.match(studio, /onCanvasWheel/);
+  assert.match(studio, /onCanvasPointerMoveCapture/);
+  assert.match(studio, /data-testid="mind-map-canvas"/);
+  assert.match(studio, /滾輪／雙指縮放/);
   assert.match(studio, /level-\$\{visualLevel\}/);
   assert.match(studio, /data-testid=\{`collapse-branch-\$\{node\.id\}`\}/);
   assert.match(studio, /aria-expanded=\{!isCollapsed\}/);

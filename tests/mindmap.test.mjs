@@ -9,6 +9,7 @@ import {
   autoLayoutNodes,
   buildDepthMap,
   buildMarkdownLines,
+  calculateAnchoredZoom,
   calculateFitTransform,
   collectSubtreeIds,
   countConnectionCrossings,
@@ -97,6 +98,25 @@ test("fit transform centers the root and keeps an asymmetric map inside the safe
     assert.ok(topLeft.y >= viewport.top - 1);
     assert.ok(bottomRight.y <= viewport.height - viewport.bottom + 1);
   }
+});
+
+test("anchored zoom keeps the same map point under the mouse or pinch center", () => {
+  const viewportCenter = { x: 500, y: 350 };
+  const anchor = { x: 760, y: 210 };
+  const totalOffset = { x: 45, y: -30 };
+  const currentZoom = 80;
+  const nextZoom = 135;
+  const beforeMapVector = {
+    x: (anchor.x - viewportCenter.x - totalOffset.x) / (currentZoom / 100),
+    y: (anchor.y - viewportCenter.y - totalOffset.y) / (currentZoom / 100),
+  };
+  const result = calculateAnchoredZoom(currentZoom, nextZoom, anchor, viewportCenter, totalOffset);
+  const anchoredAfter = {
+    x: viewportCenter.x + result.totalOffset.x + beforeMapVector.x * (nextZoom / 100),
+    y: viewportCenter.y + result.totalOffset.y + beforeMapVector.y * (nextZoom / 100),
+  };
+
+  assert.deepEqual(anchoredAfter, anchor);
 });
 
 test("collectSubtreeIds gathers a node and all descendants", () => {

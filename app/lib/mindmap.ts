@@ -43,6 +43,32 @@ export type FitTransform = {
   target: { x: number; y: number };
 };
 
+export type ViewportPoint = { x: number; y: number };
+
+export function calculateAnchoredZoom(
+  currentZoom: number,
+  nextZoom: number,
+  anchor: ViewportPoint,
+  viewportCenter: ViewportPoint,
+  totalOffset: ViewportPoint,
+): { zoom: number; totalOffset: ViewportPoint } {
+  const currentScale = Math.max(currentZoom, .01) / 100;
+  const nextScale = Math.max(nextZoom, .01) / 100;
+  const scaleRatio = nextScale / currentScale;
+  const anchorFromStageCenter = {
+    x: anchor.x - viewportCenter.x - totalOffset.x,
+    y: anchor.y - viewportCenter.y - totalOffset.y,
+  };
+
+  return {
+    zoom: nextZoom,
+    totalOffset: {
+      x: totalOffset.x + anchorFromStageCenter.x * (1 - scaleRatio),
+      y: totalOffset.y + anchorFromStageCenter.y * (1 - scaleRatio),
+    },
+  };
+}
+
 export function historyShortcutForKey(event: {
   key: string;
   metaKey?: boolean;
