@@ -5,18 +5,22 @@ import test from "node:test";
 // exercised directly without a build step.
 import {
   HISTORY_LIMIT,
+  applyTreeNodeOffsets,
   autoLayoutNodes,
   buildMarkdownLines,
   collectSubtreeIds,
   depthOf,
   createTreeBranchRibbons,
   historyShortcutForKey,
+  indentOutlineNode,
   layoutTreeViewNodes,
   nextNodeId,
   moveSiblingNode,
   nodeBounds,
   nodeBoundsOverlap,
+  outdentOutlineNode,
   pushHistory,
+  reparentSubtree,
   reorderSiblingNodes,
   safeFilename,
 } from "../app/lib/mindmap.ts";
@@ -64,6 +68,42 @@ test("sibling ordering moves only nodes with the same parent", () => {
   assert.deepEqual(down.filter((node) => node.parent === 1).map((node) => node.id), [2, 4]);
   assert.equal(moveSiblingNode(down, 4, 1), down); // already last
   assert.equal(reorderSiblingNodes(nodes, 3, 4), nodes); // different parents
+});
+
+test("reparenting moves a whole subtree and rejects invalid targets", () => {
+  const nodes = sampleNodes();
+  const moved = reparentSubtree(nodes, 2, 4);
+
+  assert.notEqual(moved, nodes);
+  assert.equal(moved.find((node) => node.id === 2).parent, 4);
+  assert.equal(moved.find((node) => node.id === 3).parent, 2, "descendants remain attached");
+  assert.deepEqual(moved.filter((node) => node.parent === 1).map((node) => node.id), [4]);
+  assert.deepEqual(moved.filter((node) => node.parent === 4).map((node) => node.id), [2]);
+
+  assert.equal(reparentSubtree(nodes, 1, 2), nodes, "the center cannot be moved");
+  assert.equal(reparentSubtree(nodes, 2, 2), nodes, "a node cannot parent itself");
+  assert.equal(reparentSubtree(nodes, 2, 3), nodes, "a node cannot move under its descendant");
+  assert.equal(reparentSubtree(nodes, 2, 1), nodes, "the current parent is a no-op");
+  assert.equal(reparentSubtree(nodes, 99, 1), nodes, "unknown nodes are rejected");
+});
+
+test("outline indentation and outdentation preserve subtree structure and order", () => {
+  const nodes = sampleNodes();
+  const indented = indentOutlineNode(nodes, 4);
+  assert.equal(indented.find((node) => node.id === 4).parent, 2);
+  assert.deepEqual(indented.filter((node) => node.parent === 2).map((node) => node.id), [3, 4]);
+
+  const restored = outdentOutlineNode(indented, 4);
+  assert.equal(restored.find((node) => node.id === 4).parent, 1);
+  assert.deepEqual(restored.filter((node) => node.parent === 1).map((node) => node.id), [2, 4]);
+
+  const outdentedChild = outdentOutlineNode(nodes, 3);
+  assert.equal(outdentedChild.find((node) => node.id === 3).parent, 1);
+  assert.deepEqual(outdentedChild.filter((node) => node.parent === 1).map((node) => node.id), [2, 3, 4]);
+
+  assert.equal(indentOutlineNode(nodes, 2), nodes, "the first sibling cannot indent");
+  assert.equal(outdentOutlineNode(nodes, 2), nodes, "a root child cannot outdent");
+  assert.equal(indentOutlineNode(nodes, 1), nodes, "the center cannot indent");
 });
 
 test("safeFilename strips illegal characters and caps length", () => {
@@ -195,6 +235,27 @@ test("tree view layout grows upward without changing saved node data", () => {
       assert.equal(nodeBoundsOverlap(nodeBounds(laidOut[i]), nodeBounds(laidOut[j])), false);
     }
   }
+});
+
+test("tree view offsets move rendered copies without changing canvas coordinates", () => {
+  const nodes = sampleNodes();
+  const laidOut = layoutTreeViewNodes(nodes);
+  const adjusted = applyTreeNodeOffsets(laidOut, {
+    2: { x: 48, y: -22 },
+    4: { x: -18, y: 30 },
+  });
+
+  assert.deepEqual(
+    adjusted.find((node) => node.id === 2),
+    { ...laidOut.find((node) => node.id === 2), x: laidOut.find((node) => node.id === 2).x + 48, y: laidOut.find((node) => node.id === 2).y - 22 },
+  );
+  assert.equal(adjusted.find((node) => node.id === 1), laidOut.find((node) => node.id === 1), "untouched nodes preserve identity");
+  assert.deepEqual(nodes.map(({ id, x, y }) => ({ id, x, y })), [
+    { id: 1, x: 0, y: 0 },
+    { id: 2, x: 0, y: 0 },
+    { id: 3, x: 0, y: 0 },
+    { id: 4, x: 0, y: 0 },
+  ], "saved canvas coordinates stay untouched");
 });
 
 test("tree view layout is deterministic for a broad 100-node crown", () => {

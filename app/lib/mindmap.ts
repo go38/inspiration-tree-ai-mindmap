@@ -17,6 +17,8 @@ export type HistoryState = {
   selectedId: number;
 };
 
+export type TreeNodeOffsets = Record<number, { x: number; y: number }>;
+
 export type HistoryShortcut = "undo" | "redo" | null;
 
 export function historyShortcutForKey(event: {
@@ -385,6 +387,20 @@ export function layoutTreeViewNodes(nodes: NodeItem[]): NodeItem[] {
   });
 }
 
+/**
+ * Apply view-only manual offsets to an automatically laid-out tree.
+ *
+ * The source nodes and their saved canvas coordinates remain untouched, so a
+ * tree adjustment never leaks into the regular mind-map layout.
+ */
+export function applyTreeNodeOffsets(nodes: NodeItem[], offsets: TreeNodeOffsets): NodeItem[] {
+  return nodes.map((node) => {
+    const offset = offsets[node.id];
+    if (!offset || (offset.x === 0 && offset.y === 0)) return node;
+    return { ...node, x: node.x + offset.x, y: node.y + offset.y };
+  });
+}
+
 /** Move a node before another sibling while preserving every subtree. */
 export function reorderSiblingNodes(nodes: NodeItem[], sourceId: number, targetId: number): NodeItem[] {
   if (sourceId === targetId) return nodes;
@@ -415,6 +431,83 @@ export function moveSiblingNode(nodes: NodeItem[], nodeId: number, delta: -1 | 1
   if (index < 0 || targetIndex < 0 || targetIndex >= siblings.length) return nodes;
   if (delta < 0) return reorderSiblingNodes(nodes, nodeId, siblings[targetIndex].id);
   return reorderSiblingNodes(nodes, siblings[targetIndex].id, nodeId);
+}
+
+/**
+ * Move a node and its whole subtree under another parent.
+ *
+ * The root cannot be moved, a node cannot become its own descendant, and a
+ * no-op keeps the original array identity. The moved branch is appended after
+ * the new parent's existing children unless `afterSiblingId` is supplied.
+ */
+function reparentSubtreeAt(
+  nodes: NodeItem[],
+  nodeId: number,
+  newParentId: number,
+  afterSiblingId?: number,
+): NodeItem[] {
+  const source = nodes.find((node) => node.id === nodeId);
+  const newParent = nodes.find((node) => node.id === newParentId);
+  if (!source || !newParent || source.parent === null || source.id === newParent.id) return nodes;
+  if (collectSubtreeIds(nodes, source.id).has(newParent.id)) return nodes;
+  if (source.parent === newParent.id && afterSiblingId === undefined) return nodes;
+
+  const updated = nodes.map((node) => node.id === source.id ? { ...node, parent: newParent.id } : node);
+  const childrenByParent = new Map<number, NodeItem[]>();
+  for (const node of updated) {
+    if (node.parent === null) continue;
+    const siblings = childrenByParent.get(node.parent);
+    if (siblings) siblings.push(node);
+    else childrenByParent.set(node.parent, [node]);
+  }
+
+  const destination = (childrenByParent.get(newParent.id) ?? []).filter((node) => node.id !== source.id);
+  const moved = updated.find((node) => node.id === source.id)!;
+  const afterIndex = afterSiblingId === undefined
+    ? -1
+    : destination.findIndex((node) => node.id === afterSiblingId);
+  destination.splice(afterIndex >= 0 ? afterIndex + 1 : destination.length, 0, moved);
+  childrenByParent.set(newParent.id, destination);
+
+  const root = updated.find((node) => node.parent === null);
+  if (!root) return nodes;
+  const ordered: NodeItem[] = [];
+  const visited = new Set<number>();
+  const append = (node: NodeItem) => {
+    if (visited.has(node.id)) return;
+    visited.add(node.id);
+    ordered.push(node);
+    (childrenByParent.get(node.id) ?? []).forEach(append);
+  };
+  append(root);
+  // Keep malformed or disconnected records visible and deterministic. Valid
+  // maps will already have visited every node from the single root.
+  updated.forEach(append);
+  return ordered;
+}
+
+/** Append a node and all descendants under a new parent. */
+export function reparentSubtree(nodes: NodeItem[], nodeId: number, newParentId: number): NodeItem[] {
+  return reparentSubtreeAt(nodes, nodeId, newParentId);
+}
+
+/** Make a node the last child of its preceding sibling. */
+export function indentOutlineNode(nodes: NodeItem[], nodeId: number): NodeItem[] {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node || node.parent === null) return nodes;
+  const siblings = nodes.filter((item) => item.parent === node.parent);
+  const index = siblings.findIndex((item) => item.id === nodeId);
+  if (index <= 0) return nodes;
+  return reparentSubtreeAt(nodes, nodeId, siblings[index - 1].id);
+}
+
+/** Move a node out one level, placing it directly after its former parent. */
+export function outdentOutlineNode(nodes: NodeItem[], nodeId: number): NodeItem[] {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node || node.parent === null) return nodes;
+  const parent = nodes.find((item) => item.id === node.parent);
+  if (!parent || parent.parent === null) return nodes;
+  return reparentSubtreeAt(nodes, nodeId, parent.parent, parent.id);
 }
 
 /** Filesystem-safe file name derived from a node title. */

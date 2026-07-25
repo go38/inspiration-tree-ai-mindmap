@@ -1,9 +1,9 @@
 import { env } from "cloudflare:workers";
-import { buildAiInput, extractAiResponseText, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
+import { buildAiInput, extractAiResponseText, parseAiExplanationResponse, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
 
 export const dynamic = "force-dynamic";
 
-const RESPONSE_SCHEMA = {
+const SUGGESTION_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["summary", "suggestions"],
@@ -27,6 +27,38 @@ const RESPONSE_SCHEMA = {
   },
 } as const;
 
+const EXPLANATION_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "explanation"],
+  properties: {
+    summary: { type: "string" },
+    explanation: {
+      type: "object",
+      additionalProperties: false,
+      required: ["definition", "keyPoints", "connections", "question"],
+      properties: {
+        definition: { type: "string" },
+        keyPoints: { type: "array", minItems: 2, maxItems: 4, items: { type: "string" } },
+        connections: {
+          type: "array",
+          maxItems: 4,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["nodeId", "relation"],
+            properties: {
+              nodeId: { type: "integer" },
+              relation: { type: "string" },
+            },
+          },
+        },
+        question: { type: "string" },
+      },
+    },
+  },
+} as const;
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const parsed = parseAiSuggestRequest(body);
@@ -40,16 +72,27 @@ export async function POST(request: Request) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25_000);
   try {
+    const explaining = parsed.mode === "explain";
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: workerEnv.OPENAI_MODEL || nodeEnv.OPENAI_MODEL || "gpt-5.6-luna",
-        instructions: "你是協助使用者整理心智圖的思考夥伴。輸出必須安全、具體、彼此不重複，不得捏造使用者未提供的事實。",
+        instructions: explaining
+          ? "你是協助使用者理解心智圖概念的解讀助手。只根據提供的節點脈絡解釋，使用白話繁體中文，清楚區分已知內容與合理推測。"
+          : "你是協助使用者整理心智圖的擴寫助手。輸出必須安全、具體、彼此不重複，不得捏造使用者未提供的事實。",
         input: buildAiInput(parsed),
         reasoning: { effort: "low" },
         max_output_tokens: 1400,
-        text: { format: { type: "json_schema", name: "mind_map_suggestions", strict: true, schema: RESPONSE_SCHEMA } },
+        text: {
+          verbosity: "low",
+          format: {
+            type: "json_schema",
+            name: explaining ? "mind_map_explanation" : "mind_map_suggestions",
+            strict: true,
+            schema: explaining ? EXPLANATION_RESPONSE_SCHEMA : SUGGESTION_RESPONSE_SCHEMA,
+          },
+        },
       }),
       signal: controller.signal,
     });
@@ -61,7 +104,10 @@ export async function POST(request: Request) {
     const result = await response.json() as unknown;
     const outputText = extractAiResponseText(result);
     const json = outputText ? JSON.parse(outputText) : null;
-    const validated = parseAiResponse(json, new Set(parsed.nodes.map((node) => node.id)));
+    const allowedNodeIds = new Set(parsed.nodes.map((node) => node.id));
+    const validated = explaining
+      ? parseAiExplanationResponse(json, allowedNodeIds)
+      : parseAiResponse(json, allowedNodeIds);
     if (!validated) return Response.json({ error: "AI 回覆格式不完整，請再試一次。" }, { status: 502 });
     return Response.json(validated);
   } catch (error) {
