@@ -770,7 +770,7 @@ export default function MindMapStudio({
       tone: tones[existingChildren % tones.length],
     };
     setNodes((items) => [...items, created]);
-    setSelectedId(created.id);
+    setSelectedId(parent.id);
     flashToast(`已加入「${suggestion.title}」`);
   }
 
@@ -1522,7 +1522,21 @@ export default function MindMapStudio({
               <div className="suggestion-heading"><div><span className="spark">✦</span><strong>{generatedForNodeId === selected.id ? "AI 擴寫草稿" : "靈感起點"}</strong></div><button data-testid="rotate-suggestions" onClick={() => { setGeneratedSuggestions(null); setGeneratedForNodeId(null); setExpansionSummary(""); setAiError(""); setSuggestionRound((round) => round + 1); }}>換一組 ↻</button></div>
               {generatedForNodeId === selected.id && expansionSummary && <p className="ai-summary">{expansionSummary}</p>}
               <div className="suggestions" data-testid="ai-suggestions" aria-live="polite" key={`${selected.id}-${suggestionRound}`}>
-                {aiSuggestions.map((suggestion) => <button className="suggestion" key={suggestion.title} onClick={() => addAiSuggestion(suggestion)} aria-label={`加入擴寫節點：${suggestion.title}`}><div><strong>{suggestion.title}</strong><p>{suggestion.note}</p></div><span className="add-suggestion">＋</span></button>)}
+                {aiSuggestions.map((suggestion) => {
+                  const suggestionKey = suggestion.title.trim().toLocaleLowerCase("zh-TW");
+                  const isAdded = existingChildTitles.has(suggestionKey);
+                  return <button
+                    className={`suggestion${isAdded ? " added" : ""}`}
+                    key={suggestion.title}
+                    data-added={isAdded}
+                    onClick={() => addAiSuggestion(suggestion)}
+                    aria-label={isAdded ? `已加入擴寫節點：${suggestion.title}` : `加入擴寫節點：${suggestion.title}`}
+                    disabled={isAdded}
+                  >
+                    <div><strong>{suggestion.title}</strong><p>{suggestion.note}</p>{isAdded && <small>已加入目前節點</small>}</div>
+                    <span className="add-suggestion" aria-hidden="true">{isAdded ? "✓" : "＋"}</span>
+                  </button>;
+                })}
               </div>
               {generatedForNodeId === selected.id && <div className="suggestion-actions"><button type="button" className="primary" data-testid="ai-expand-all" onClick={addAllAiSuggestions} disabled={!pendingExpansion.length}>{pendingExpansion.length ? `全部加入圖中（${pendingExpansion.length}）` : "已全部加入圖中"}</button></div>}
             </> : visibleExplanation ? <section className="concept-explanation" data-testid="concept-explanation" aria-live="polite">

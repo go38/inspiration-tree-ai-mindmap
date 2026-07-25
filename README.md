@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.18.0`
+- 目前產品版本：`v0.18.1`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -43,6 +43,11 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.18.1 重點
+
+- AI 擴寫草稿支援連續挑選多項；加入一項後仍保留原節點焦點與整組草稿。
+- 已加入的草稿會顯示完成狀態並停止重複點選，其餘建議可繼續逐項加入同一節點。
 
 ## v0.18.0 重點
 

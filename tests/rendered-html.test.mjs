@@ -103,6 +103,9 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.doesNotMatch(studio, /<span aria-hidden="true">＋<\/span><small>新增<\/small>/);
   assert.match(studio, /addAiSuggestion/);
   assert.match(studio, /addAllAiSuggestions/);
+  assert.match(studio, /setSelectedId\(parent\.id\)/, "adding one AI suggestion keeps the source node selected so more suggestions remain available");
+  assert.match(studio, /data-added=\{isAdded\}/);
+  assert.match(studio, /已加入目前節點/);
   assert.match(studio, /applyExplanationToNode/);
   assert.match(studio, /data-testid="ai-expand-all"/);
   assert.match(studio, /data-testid="concept-explanation"/);
