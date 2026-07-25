@@ -9,6 +9,8 @@ import {
   autoLayoutNodes,
   buildMarkdownLines,
   collectSubtreeIds,
+  countConnectionCrossings,
+  createCanvasBranchRibbons,
   depthOf,
   createTreeBranchRibbons,
   historyShortcutForKey,
@@ -144,7 +146,7 @@ test("buildMarkdownLines preserves hierarchy, notes, and injected timestamp", ()
   assert.doesNotMatch(md, /### 分支 B\n\n\n/);
 });
 
-test("auto layout arranges 100 nodes without overlap and keeps hierarchy outward", () => {
+test("auto layout arranges 100 nodes without overlap, crossings, or two-sided crowding", () => {
   const nodes = [
     { id: 1, parent: null, text: "中心", note: "", x: 420, y: 300, tone: "ink" },
   ];
@@ -173,21 +175,50 @@ test("auto layout arranges 100 nodes without overlap and keeps hierarchy outward
   }
 
   const byId = new Map(laidOut.map((node) => [node.id, node]));
+  const rootCenter = {
+    x: laidOut[0].x + nodeBounds(laidOut[0]).width / 2,
+    y: laidOut[0].y + nodeBounds(laidOut[0]).height / 2,
+  };
   for (const node of laidOut.slice(1)) {
     const parent = byId.get(node.parent);
     const nodeCenter = node.x + nodeBounds(node).width / 2;
+    const nodeCenterY = node.y + nodeBounds(node).height / 2;
     const parentCenter = parent.x + nodeBounds(parent).width / 2;
-    const rootCenter = laidOut[0].x + nodeBounds(laidOut[0]).width / 2;
+    const parentCenterY = parent.y + nodeBounds(parent).height / 2;
     assert.ok(
-      nodeCenter < parentCenter || nodeCenter > parentCenter,
-      `node ${node.id} must be horizontally separated from its parent`,
-    );
-    assert.equal(
-      Math.sign(nodeCenter - rootCenter),
-      Math.sign(parentCenter - rootCenter) || Math.sign(nodeCenter - rootCenter),
-      `node ${node.id} stays on its branch side`,
+      Math.hypot(nodeCenter - rootCenter.x, nodeCenterY - rootCenter.y) >
+        Math.hypot(parentCenter - rootCenter.x, parentCenterY - rootCenter.y),
+      `node ${node.id} must sit farther from the center than its parent`,
     );
   }
+  const rootChildren = laidOut.filter((node) => node.parent === laidOut[0].id);
+  const rootChildCenters = rootChildren.map((node) => ({
+    x: node.x + nodeBounds(node).width / 2,
+    y: node.y + nodeBounds(node).height / 2,
+  }));
+  assert.ok(rootChildCenters.some((point) => point.y < rootCenter.y - 100), "branches spread above the center");
+  assert.ok(rootChildCenters.some((point) => point.y > rootCenter.y + 100), "branches spread below the center");
+  assert.ok(rootChildCenters.some((point) => point.x < rootCenter.x - 100), "branches spread left of the center");
+  assert.ok(rootChildCenters.some((point) => point.x > rootCenter.x + 100), "branches spread right of the center");
+  assert.equal(countConnectionCrossings(laidOut), 0, "tidy radial connections do not cross");
+});
+
+test("canvas connections attach to card edges and do not overlap at node centers", () => {
+  const laidOut = autoLayoutNodes(sampleNodes());
+  const ribbons = createCanvasBranchRibbons(laidOut);
+  assert.equal(ribbons.length, laidOut.length - 1);
+  const byId = new Map(laidOut.map((node) => [node.id, node]));
+  for (const ribbon of ribbons) {
+    const parent = byId.get(ribbon.parentId);
+    const parentBox = nodeBounds(parent);
+    const parentCenter = {
+      x: parent.x + parentBox.width / 2,
+      y: parent.y + parentBox.height / 2,
+    };
+    assert.notDeepEqual(ribbon.start, parentCenter, "each line starts at the card boundary");
+    assert.match(ribbon.path, /^M /);
+  }
+  assert.equal(countConnectionCrossings(laidOut), 0);
 });
 
 test("branch auto layout anchors the selected root, avoids outsiders, and leaves them untouched", () => {

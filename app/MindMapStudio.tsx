@@ -7,7 +7,7 @@ import {
   autoLayoutNodes,
   buildMarkdownLines,
   collectSubtreeIds,
-  createCurvedRibbon,
+  createCanvasBranchRibbons,
   createTreeBranchRibbons,
   depthOf,
   historyShortcutForKey,
@@ -120,6 +120,13 @@ type NodeDrag = {
 
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
+const TREE_TONE_COLORS: Record<"trunk" | NodeItem["tone"], string> = {
+  trunk: "#7a5635",
+  ink: "#725035",
+  coral: "#d8755e",
+  sage: "#718c69",
+  sun: "#c99d3e",
+};
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "雲端共享",
@@ -270,26 +277,29 @@ export default function MindMapStudio({
       return createTreeBranchRibbons(displayNodes).map((ribbon) => ({
         id: ribbon.id,
         path: ribbon.path,
+        centerPath: ribbon.centerPath,
         tone: ribbon.tone,
         kind: ribbon.kind,
+        start: {
+          x: (ribbon.curve.top.start[0] + ribbon.curve.bottom.start[0]) / 2,
+          y: (ribbon.curve.top.start[1] + ribbon.curve.bottom.start[1]) / 2,
+        },
+        end: {
+          x: (ribbon.curve.top.end[0] + ribbon.curve.bottom.end[0]) / 2,
+          y: (ribbon.curve.top.end[1] + ribbon.curve.bottom.end[1]) / 2,
+        },
       }));
     }
-    const byId = new Map(displayNodes.map((node) => [node.id, node]));
-    return displayNodes.flatMap((node) => {
-      const parent = node.parent === null ? undefined : byId.get(node.parent);
-      if (!parent || !visibleNodeIds.has(parent.id)) return [];
-      const parentBox = nodeBounds(parent);
-      const nodeBox = nodeBounds(node);
-      const x1 = parent.x + parentBox.width / 2;
-      const y1 = viewMode === "tree" ? parent.y : parent.y + parentBox.height / 2;
-      const x2 = node.x + nodeBox.width / 2;
-      const y2 = viewMode === "tree" ? node.y + nodeBox.height : node.y + nodeBox.height / 2;
-      const depth = depthOf(nodes, node);
-      const thickness = Math.max(4, 10 - (depth - 1) * 3);
-      const curve = createCurvedRibbon(x1, y1, x2, y2, thickness, Math.max(1.2, thickness * .12), parent.id + node.id);
-      return [{ id: `${parent.id}-${node.id}`, path: curve.path, tone: node.tone, kind: "branch" as const }];
-    });
-  }, [displayNodes, nodes, viewMode, visibleNodeIds]);
+    return createCanvasBranchRibbons(displayNodes).map((ribbon) => ({
+      id: ribbon.id,
+      path: ribbon.path,
+      centerPath: "",
+      tone: ribbon.tone,
+      kind: ribbon.kind,
+      start: ribbon.start,
+      end: ribbon.end,
+    }));
+  }, [displayNodes, viewMode]);
 
   function flashToast(message: string, ms = 1800) {
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
@@ -739,7 +749,7 @@ export default function MindMapStudio({
       const nextDisplay = viewMode === "tree"
         ? applyTreeNodeOffsets(layoutTreeViewNodes(arranged), treeOffsets)
         : arranged;
-      window.requestAnimationFrame(() => fitNodesToView(nextDisplay, message, viewMode === "tree" ? 110 : MAX_ZOOM));
+      window.requestAnimationFrame(() => fitNodesToView(nextDisplay, message, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode === "tree" ? 0 : 40));
     }
   }
 
@@ -800,7 +810,7 @@ export default function MindMapStudio({
       const nextDisplay = viewMode === "tree"
         ? applyTreeNodeOffsets(layoutTreeViewNodes(arranged), treeOffsets)
         : arranged;
-      fitNodesToView(nextDisplay, `AI 已擴寫 ${created.length} 個子節點，可復原`, viewMode === "tree" ? 110 : MAX_ZOOM);
+      fitNodesToView(nextDisplay, `AI 已擴寫 ${created.length} 個子節點，可復原`, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode === "tree" ? 0 : 40);
     });
   }
 
@@ -811,7 +821,7 @@ export default function MindMapStudio({
     flashToast("概念解釋已設為節點說明，可復原", 2200);
   }
 
-  function fitNodesToView(items: NodeItem[], message = "已將心智圖調整至畫面中央", maximumZoom = MAX_ZOOM) {
+  function fitNodesToView(items: NodeItem[], message = "已將心智圖調整至畫面中央", maximumZoom = MAX_ZOOM, verticalBias = 40) {
     if (!items.length) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     const bounds = items.map(nodeBounds);
@@ -819,17 +829,18 @@ export default function MindMapStudio({
     const maxX = Math.max(...bounds.map((box) => box.x + box.width));
     const minY = Math.min(...bounds.map((box) => box.y));
     const maxY = Math.max(...bounds.map((box) => box.y + box.height));
+    const verticalPadding = verticalBias > 0 ? 150 : 90;
     const nextZoom = rect
-      ? Math.round(Math.max(MIN_ZOOM, Math.min(maximumZoom, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - 90) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
+      ? Math.round(Math.max(MIN_ZOOM, Math.min(maximumZoom, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - verticalPadding) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
       : 100;
     setZoom(nextZoom);
-    setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 - (minY + maxY) / 2 });
+    setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 + verticalBias - (minY + maxY) / 2 });
     setStagePan({ x: 0, y: 0 });
     flashToast(message);
   }
 
   function fitToView() {
-    fitNodesToView(displayNodes, viewMode === "tree" ? "已將整棵靈感樹調整至畫面中央" : undefined, viewMode === "tree" ? 110 : MAX_ZOOM);
+    fitNodesToView(displayNodes, viewMode === "tree" ? "已將整棵靈感樹調整至畫面中央" : undefined, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode === "tree" ? 0 : 40);
   }
 
   function selectViewMode(mode: ViewMode) {
@@ -839,7 +850,7 @@ export default function MindMapStudio({
       ? applyTreeNodeOffsets(layoutTreeViewNodes(visibleNodes), treeOffsets)
       : visibleNodes;
     window.requestAnimationFrame(() => {
-      fitNodesToView(nextDisplay, mode === "tree" ? "已切換至樹狀檢視" : "已切換至心智圖檢視", mode === "tree" ? 110 : MAX_ZOOM);
+      fitNodesToView(nextDisplay, mode === "tree" ? "已切換至樹狀檢視" : "已切換至心智圖檢視", mode === "tree" ? 110 : MAX_ZOOM, mode === "tree" ? 0 : 40);
     });
   }
 
@@ -854,6 +865,7 @@ export default function MindMapStudio({
         applyTreeNodeOffsets(baseTreeNodes, nextOffsets),
         branchRootId === undefined ? "樹冠已依層級自動整理" : "分枝已依層級展開",
         110,
+        0,
       );
       return;
     }
@@ -1159,23 +1171,7 @@ export default function MindMapStudio({
       const oy = 150 + (960 - (maxY - minY) * scale) / 2 - minY * scale;
       const exportRibbons = viewMode === "tree"
         ? createTreeBranchRibbons(exportNodes)
-        : exportNodes.flatMap((node) => {
-          const parent = exportNodes.find((item) => item.id === node.parent);
-          if (!parent) return [];
-          const parentBox = nodeBounds(parent), nodeBox = nodeBounds(node);
-          const depth = depthOf(nodes, node);
-          const startWidth = Math.max(4, 10 - (depth - 1) * 3);
-          const curve = createCurvedRibbon(
-            parent.x + parentBox.width / 2,
-            parent.y + parentBox.height / 2,
-            node.x + nodeBox.width / 2,
-            node.y + nodeBox.height / 2,
-            startWidth,
-            Math.max(1.2, startWidth * .12),
-            parent.id + node.id,
-          );
-          return [{ id: `branch-${parent.id}-${node.id}`, tone: node.tone, kind: "branch" as const, curve, path: curve.path }];
-        });
+        : createCanvasBranchRibbons(exportNodes);
       const point = (value: number[]) => [ox + value[0] * scale, oy + value[1] * scale];
       exportRibbons.forEach((ribbon) => {
         const color = ribbon.tone === "trunk" ? "#8b6b49" : ribbon.tone === "sage" ? "#7f9876" : ribbon.tone === "sun" ? "#d8ad44" : "#ed765f";
@@ -1427,7 +1423,29 @@ export default function MindMapStudio({
           <div className="canvas-hint">{viewMode === "tree" ? "拖曳空白處平移 · 拖曳節點微調樹冠 · 雙擊編輯" : "拖曳空白處平移 · 拖曳節點整理 · 雙擊編輯"}</div>
           <div className="map-stage" style={{ transform: `translate(${stageOffset.x + stagePan.x}px, ${stageOffset.y + stagePan.y}px) scale(${zoom / 100})` }}>
             <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
-              {connections.map((line) => <path key={line.id} className={`connection ${line.kind} ${line.tone}`} d={line.path} />)}
+              {viewMode === "tree" && <defs>{connections.map((line) => (
+                <linearGradient
+                  key={`gradient-${line.id}`}
+                  id={`tree-gradient-${line.id}`}
+                  gradientUnits="userSpaceOnUse"
+                  x1={line.start.x}
+                  y1={line.start.y}
+                  x2={line.end.x}
+                  y2={line.end.y}
+                >
+                  <stop offset="0%" stopColor={line.kind === "trunk" ? "#604127" : "#745238"} />
+                  <stop offset={line.kind === "trunk" ? "72%" : "38%"} stopColor={line.kind === "trunk" ? "#8e6844" : "#896443"} />
+                  <stop offset="100%" stopColor={TREE_TONE_COLORS[line.tone]} />
+                </linearGradient>
+              ))}</defs>}
+              {connections.map((line) => viewMode === "tree" ? (
+                <g key={line.id} className={`tree-connection ${line.kind}`}>
+                  <path className="tree-connection-outline" d={line.path} />
+                  <path className={`connection ${line.kind} ${line.tone}`} style={{ fill: `url(#tree-gradient-${line.id})` }} d={line.path} />
+                  <path className="tree-bark-line" d={line.centerPath} />
+                  {line.kind === "trunk" && <circle className="tree-knot" cx={line.end.x} cy={line.end.y} r="4.2" />}
+                </g>
+              ) : <path key={line.id} className={`connection ${line.kind} ${line.tone}`} d={line.path} />)}
             </svg>
             {displayNodes.map((node) => {
               const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);

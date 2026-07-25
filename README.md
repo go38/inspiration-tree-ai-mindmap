@@ -3,8 +3,8 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.17.0`
-- 存取狀態：私人 Beta（僅限擁有者）
+- 目前產品版本：`v0.18.0`
+- 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
 - 完整開發紀錄：[DEVELOPMENT.md](./DEVELOPMENT.md)
@@ -43,6 +43,12 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.18.0 重點
+
+- 智慧整理改用環狀扇區，節點平均分散到中心四周。
+- 心智圖連線從卡片邊界出入，整理後不交叉、不堆疊在節點中心。
+- 樹狀檢視加入木質漸層、樹皮紋理、枝條輪廓與自然分叉。
 
 ## v0.17.0 重點
 

@@ -46,6 +46,9 @@ const LAYOUT_ROOT_HEIGHT = 82;
 const LAYOUT_COLUMN_GAP = 112;
 const LAYOUT_ROW_GAP = 28;
 const LAYOUT_COLLISION_GAP = 18;
+const RADIAL_MIN_RADIUS = 260;
+const RADIAL_LEVEL_GAP = 220;
+const RADIAL_NODE_CLEARANCE = 214;
 const TREE_STAGE_CENTER_X = 540;
 const TREE_ROOT_Y = 650;
 const TREE_LEVEL_GAP = 250;
@@ -150,10 +153,137 @@ export function nodeBoundsOverlap(a: NodeBounds, b: NodeBounds, gap = 0): boolea
 }
 
 /**
+ * Place the whole map in nested radial sectors.
+ *
+ * Every leaf receives an evenly spaced angle around the center. A parent uses
+ * the middle of its descendants' angular interval, so separate subtrees keep
+ * separate sectors and their direct connections do not cross. Ring radii grow
+ * when a level is dense, keeping even very broad maps collision-free.
+ */
+function layoutRadialMap(nodes: NodeItem[], root: NodeItem): NodeItem[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map<number, NodeItem[]>();
+  for (const node of nodes) {
+    if (node.parent === null || !byId.has(node.parent)) continue;
+    const children = childrenByParent.get(node.parent);
+    if (children) children.push(node);
+    else childrenByParent.set(node.parent, [node]);
+  }
+
+  const depthById = new Map<number, number>([[root.id, 0]]);
+  const spanById = new Map<number, { first: number; last: number }>();
+  const visiting = new Set<number>();
+  const visited = new Set<number>();
+  let nextLeaf = 0;
+  let maxDepth = 0;
+
+  const measure = (node: NodeItem, depth: number): { first: number; last: number } => {
+    if (visiting.has(node.id) || visited.has(node.id)) {
+      const slot = nextLeaf++;
+      const fallback = { first: slot, last: slot };
+      spanById.set(node.id, fallback);
+      return fallback;
+    }
+    visiting.add(node.id);
+    visited.add(node.id);
+    depthById.set(node.id, depth);
+    maxDepth = Math.max(maxDepth, depth);
+    const children = (childrenByParent.get(node.id) ?? []).filter((child) => !visiting.has(child.id));
+    let span: { first: number; last: number };
+    if (children.length === 0) {
+      const slot = nextLeaf++;
+      span = { first: slot, last: slot };
+    } else {
+      const childSpans = children.map((child) => measure(child, depth + 1));
+      span = { first: childSpans[0].first, last: childSpans[childSpans.length - 1].last };
+    }
+    spanById.set(node.id, span);
+    visiting.delete(node.id);
+    return span;
+  };
+
+  measure(root, 0);
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue;
+    const slot = nextLeaf++;
+    depthById.set(node.id, 1);
+    spanById.set(node.id, { first: slot, last: slot });
+    maxDepth = Math.max(maxDepth, 1);
+  }
+
+  const leafCount = Math.max(nextLeaf, 1);
+  const angleStep = (Math.PI * 2) / leafCount;
+  // Center the fan on 12 o'clock. Two leaves become left/right; four leaves
+  // naturally occupy the four diagonals instead of two crowded side columns.
+  const startAngle = -Math.PI / 2 - ((leafCount - 1) * angleStep) / 2;
+  const angleById = new Map<number, number>();
+  for (const node of nodes) {
+    if (node.id === root.id) continue;
+    const span = spanById.get(node.id);
+    if (!span) continue;
+    angleById.set(node.id, startAngle + ((span.first + span.last) / 2) * angleStep);
+  }
+
+  const nodesByDepth = new Map<number, NodeItem[]>();
+  for (const node of nodes) {
+    const depth = depthById.get(node.id) ?? 1;
+    if (depth === 0) continue;
+    const level = nodesByDepth.get(depth);
+    if (level) level.push(node);
+    else nodesByDepth.set(depth, [node]);
+  }
+
+  const radiusByDepth = new Map<number, number>();
+  let previousRadius = 0;
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const level = nodesByDepth.get(depth) ?? [];
+    const angles = level
+      .map((node) => angleById.get(node.id))
+      .filter((angle): angle is number => angle !== undefined)
+      .map((angle) => ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2))
+      .sort((a, b) => a - b);
+    let requiredForLevel = 0;
+    if (angles.length > 1) {
+      let minimumGap = Math.PI * 2;
+      for (let index = 0; index < angles.length; index++) {
+        const next = index === angles.length - 1 ? angles[0] + Math.PI * 2 : angles[index + 1];
+        minimumGap = Math.min(minimumGap, next - angles[index]);
+      }
+      requiredForLevel = RADIAL_NODE_CLEARANCE / Math.max(2 * Math.sin(minimumGap / 2), .02);
+    }
+    const radius = Math.ceil(Math.max(
+      depth === 1 ? RADIAL_MIN_RADIUS : previousRadius + RADIAL_LEVEL_GAP,
+      requiredForLevel,
+    ));
+    radiusByDepth.set(depth, radius);
+    previousRadius = radius;
+  }
+
+  const rootBounds = nodeBounds(root);
+  const centerX = root.x + rootBounds.width / 2;
+  const centerY = root.y + rootBounds.height / 2;
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.id === root.id) return node;
+    const depth = depthById.get(node.id) ?? 1;
+    const angle = angleById.get(node.id) ?? -Math.PI / 2;
+    const radius = radiusByDepth.get(depth) ?? RADIAL_MIN_RADIUS;
+    const bounds = nodeBounds(node);
+    const x = Math.round(centerX + Math.cos(angle) * radius - bounds.width / 2);
+    const y = Math.round(centerY + Math.sin(angle) * radius - bounds.height / 2);
+    if (node.x === x && node.y === y) return node;
+    changed = true;
+    return { ...node, x, y };
+  });
+  return changed ? next : nodes;
+}
+
+/**
  * Deterministic tidy-tree layout.
  *
- * With no rootId (or the center id), first-level branches are placed on both
- * sides of the center while preserving an existing clear left/right choice.
+ * With no rootId (or the center id), the complete map is distributed through
+ * nested radial sectors around the center instead of concentrating on two
+ * horizontal sides.
  * With a non-center rootId, that branch root stays anchored and descendants
  * are arranged outward on its current side. Unselected nodes never move.
  */
@@ -164,6 +294,7 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
   const center = nodes.find((node) => node.parent === null);
   const target = rootId === undefined ? center : byId.get(rootId);
   if (!center || !target) return nodes;
+  if (target.parent === null) return layoutRadialMap(nodes, target);
 
   const childrenByParent = new Map<number, NodeItem[]>();
   for (const node of nodes) {
@@ -223,25 +354,7 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
     roots.forEach((root) => assignX(root, 1, new Set([anchor.id])));
   };
 
-  if (target.parent === null) {
-    const rootChildren = childrenByParent.get(target.id) ?? [];
-    const left: NodeItem[] = [];
-    const right: NodeItem[] = [];
-    let ambiguousIndex = 0;
-    const centerX = target.x + nodeBounds(target).width / 2;
-
-    for (const child of rootChildren) {
-      const childCenterX = child.x + nodeBounds(child).width / 2;
-      if (childCenterX < centerX - 24) left.push(child);
-      else if (childCenterX > centerX + 24) right.push(child);
-      else {
-        (ambiguousIndex % 2 === 0 ? left : right).push(child);
-        ambiguousIndex += 1;
-      }
-    }
-    layoutForest(target, left, -1);
-    layoutForest(target, right, 1);
-  } else {
+  {
     const parent = byId.get(target.parent);
     const parentCenterX = parent ? parent.x + nodeBounds(parent).width / 2 : target.x;
     const targetCenterX = target.x + nodeBounds(target).width / 2;
@@ -536,11 +649,12 @@ export function createCurvedRibbon(
   startWidth: number,
   endWidth: number,
   seed: number,
+  bendScale = 1,
 ) {
   const dx = x2 - x1, dy = y2 - y1;
   const length = Math.max(Math.hypot(dx, dy), 1);
   const nx = -dy / length, ny = dx / length;
-  const bend = Math.min(46, length * .13) * (seed % 2 === 0 ? 1 : -1);
+  const bend = Math.min(46, length * .13) * (seed % 2 === 0 ? 1 : -1) * bendScale;
   const c1x = x1 + dx * .34 + nx * bend, c1y = y1 + dy * .34 + ny * bend;
   const c2x = x1 + dx * .68 + nx * bend, c2y = y1 + dy * .68 + ny * bend;
   const startHalf = startWidth / 2, endHalf = endWidth / 2;
@@ -563,13 +677,125 @@ export function createCurvedRibbon(
   };
 }
 
+export type CanvasRibbon = {
+  id: string;
+  parentId: number;
+  childId: number;
+  tone: NodeItem["tone"];
+  kind: "branch";
+  curve: ReturnType<typeof createCurvedRibbon>;
+  path: string;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+};
+
+function nodeBoundaryPoint(node: NodeItem, toward: NodeItem): { x: number; y: number } {
+  const bounds = nodeBounds(node);
+  const towardBounds = nodeBounds(toward);
+  const centerX = node.x + bounds.width / 2;
+  const centerY = node.y + bounds.height / 2;
+  const targetX = toward.x + towardBounds.width / 2;
+  const targetY = toward.y + towardBounds.height / 2;
+  const dx = targetX - centerX;
+  const dy = targetY - centerY;
+  const scale = 1 / Math.max(
+    Math.abs(dx) / Math.max(bounds.width / 2, 1),
+    Math.abs(dy) / Math.max(bounds.height / 2, 1),
+    .001,
+  );
+  return { x: centerX + dx * scale, y: centerY + dy * scale };
+}
+
+/**
+ * Build direct, tapered canvas connections from card edge to card edge.
+ *
+ * Removing the previous alternating bend keeps a radial tidy layout planar,
+ * while distinct boundary anchors stop sibling lines from piling up in the
+ * middle of a node.
+ */
+export function createCanvasBranchRibbons(nodes: NodeItem[]): CanvasRibbon[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.flatMap((node) => {
+    const parent = node.parent === null ? undefined : byId.get(node.parent);
+    if (!parent) return [];
+    const start = nodeBoundaryPoint(parent, node);
+    const end = nodeBoundaryPoint(node, parent);
+    const depth = depthOf(nodes, node);
+    const thickness = Math.max(4, 10 - (depth - 1) * 3);
+    const curve = createCurvedRibbon(
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      thickness,
+      Math.max(1.2, thickness * .12),
+      parent.id + node.id,
+      0,
+    );
+    return [{
+      id: `${parent.id}-${node.id}`,
+      parentId: parent.id,
+      childId: node.id,
+      tone: node.tone,
+      kind: "branch" as const,
+      curve,
+      path: curve.path,
+      start,
+      end,
+    }];
+  });
+}
+
+/** Count strict crossings between canvas connection center lines. */
+export function countConnectionCrossings(nodes: NodeItem[]): number {
+  const ribbons = createCanvasBranchRibbons(nodes);
+  const orientation = (
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+    c: { x: number; y: number },
+  ) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  let crossings = 0;
+  for (let firstIndex = 0; firstIndex < ribbons.length; firstIndex++) {
+    const first = ribbons[firstIndex];
+    for (let secondIndex = firstIndex + 1; secondIndex < ribbons.length; secondIndex++) {
+      const second = ribbons[secondIndex];
+      if (
+        first.parentId === second.parentId ||
+        first.parentId === second.childId ||
+        first.childId === second.parentId ||
+        first.childId === second.childId
+      ) continue;
+      const o1 = orientation(first.start, first.end, second.start);
+      const o2 = orientation(first.start, first.end, second.end);
+      const o3 = orientation(second.start, second.end, first.start);
+      const o4 = orientation(second.start, second.end, first.end);
+      if (o1 * o2 < 0 && o3 * o4 < 0) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
 export type TreeRibbon = {
   id: string;
   tone: NodeItem["tone"] | "trunk";
   kind: "trunk" | "branch";
   curve: ReturnType<typeof createCurvedRibbon>;
   path: string;
+  centerPath: string;
 };
+
+function ribbonCenterPath(curve: ReturnType<typeof createCurvedRibbon>): string {
+  const center = (a: number[], b: number[]) => [
+    (a[0] + b[0]) / 2,
+    (a[1] + b[1]) / 2,
+  ];
+  const start = center(curve.top.start, curve.bottom.start);
+  const c1 = center(curve.top.c1, curve.bottom.c1);
+  const c2 = center(curve.top.c2, curve.bottom.c2);
+  const end = center(curve.top.end, curve.bottom.end);
+  const point = (value: number[]) => `${value[0].toFixed(1)} ${value[1].toFixed(1)}`;
+  return `M ${point(start)} C ${point(c1)}, ${point(c2)}, ${point(end)}`;
+}
 
 /**
  * Build a tree-like connection system with shared trunks and visible forks.
@@ -620,6 +846,7 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
         kind: "branch",
         curve,
         path: curve.path,
+        centerPath: ribbonCenterPath(curve),
       });
       continue;
     }
@@ -665,6 +892,7 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
       kind: "trunk",
       curve: trunk,
       path: trunk.path,
+      centerPath: ribbonCenterPath(trunk),
     });
 
     branchStarts.forEach(({ child, x, y, edgeRatio }, index) => {
@@ -687,6 +915,7 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
         kind: "branch",
         curve,
         path: curve.path,
+        centerPath: ribbonCenterPath(curve),
       });
     });
   }
