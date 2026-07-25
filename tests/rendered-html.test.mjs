@@ -60,7 +60,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, workspacePage, workspaceClient, schema, suggestRoute, inbox] = await Promise.all([
+  const [page, studio, layout, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -69,6 +69,7 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/suggest/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/inbox.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/viewState.ts", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin client wrapper around the shared studio.
@@ -97,8 +98,14 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /data-testid="auto-layout-all"/);
   assert.match(studio, /checkpoint\(\);\s+setNodes\(next\)/, "layout creates one undo checkpoint before applying positions");
   assert.match(studio, /checkpoint\(\);\s+const arranged = autoLayoutNodes\(moved\)/, "transplant creates one undo checkpoint before applying the structural layout");
-  assert.match(studio, /const MIN_ZOOM = 50/);
+  assert.match(studio, /const MIN_ZOOM = 10/);
   assert.match(studio, /const MAX_ZOOM = 200/);
+  assert.match(studio, /calculateFitTransform/);
+  assert.match(studio, /level-\$\{visualLevel\}/);
+  assert.match(studio, /data-testid=\{`collapse-branch-\$\{node\.id\}`\}/);
+  assert.match(studio, /aria-expanded=\{!isCollapsed\}/);
+  assert.match(studio, /saveMapViewState/);
+  assert.match(viewState, /inspiration-tree:view-state:v1:/);
   assert.match(studio, /data-tooltip="新增節點"/);
   assert.doesNotMatch(studio, /<span aria-hidden="true">＋<\/span><small>新增<\/small>/);
   assert.match(studio, /addAiSuggestion/);

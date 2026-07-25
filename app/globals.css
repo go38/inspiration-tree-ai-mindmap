@@ -138,7 +138,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .mind-node:hover { box-shadow:0 8px 20px rgba(48,42,31,.13); }
 .mind-node.selected { outline:3px solid rgba(237,118,95,.42); outline-offset:2px; box-shadow:0 7px 22px rgba(48,42,31,.16); }
 .mind-node.search-match { box-shadow:0 0 0 5px rgba(243,216,146,.75),0 8px 20px rgba(48,42,31,.13); }
-.mind-node.ink { width:204px; min-height:94px; margin-left:-12px; margin-top:-6px; background:var(--ink); color:white; border:0; border-radius:18px; box-shadow:0 10px 25px rgba(33,31,26,.22); }
+.mind-node.level-root { width:204px; height:94px; min-height:94px; }
+.mind-node.level-branch { width:180px; height:82px; min-height:82px; }
+.mind-node.level-detail { width:152px; height:70px; min-height:70px; padding:10px 11px 33px 13px; border-radius:12px; }
+.mind-node.level-detail h3 { font-size:12px; }
+.mind-node.level-detail p { font-size:8.5px; }
+.mind-node.level-branch .node-copy,.mind-node.level-detail .node-copy { overflow:hidden; }
+.mind-node.level-branch .node-copy h3,.mind-node.level-branch .node-copy p,.mind-node.level-detail .node-copy h3,.mind-node.level-detail .node-copy p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mind-node:has(.node-editor) { height:auto; min-height:112px; }
+.mind-node.ink { background:var(--ink); color:white; border:0; border-radius:18px; box-shadow:0 10px 25px rgba(33,31,26,.22); }
 .mind-node.sage { border-left-color:var(--sage); } .mind-node.sun { border-left-color:#d8ad44; } .mind-node.coral { border-left-color:var(--coral); }
 .tree-active .mind-node { cursor:grab; box-shadow:0 7px 18px rgba(48,42,31,.1); }
 .tree-active .mind-node:active,.tree-active .mind-node.dragging { cursor:grabbing; }
@@ -155,6 +163,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .mind-node .node-actions button { flex:0 0 auto; width:24px; height:24px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; font-size:12px; line-height:1; font-weight:700; opacity:.56; cursor:pointer; }
 .mind-node:hover .node-actions button,.mind-node.selected .node-actions button,.mind-node .node-actions button:focus-visible { opacity:.86; }
 .mind-node .node-actions button:hover { opacity:1; background:var(--coral); color:white; border-color:var(--coral); }
+.branch-collapse-toggle { position:absolute; z-index:5; top:-17px; right:8px; height:30px; display:flex; align-items:center; gap:5px; padding:0 10px; border:1px solid #9daf96; border-radius:16px; background:#f3f7f0; color:#53664c; box-shadow:0 4px 12px rgba(48,42,31,.12); font-size:9px; font-weight:800; cursor:pointer; white-space:nowrap; }
+.branch-collapse-toggle:hover { border-color:#6f8965; background:#e7efe2; transform:translateY(-1px); }
+.branch-collapse-toggle span { font-size:12px; }
+.mind-node.collapsed { box-shadow:0 7px 18px rgba(48,42,31,.12),inset 0 -3px 0 rgba(127,152,118,.28); }
 .node-editor { display:grid; width:100%; gap:5px; }
 .node-editor input { width:100%; min-width:0; padding:5px 7px; border:1px solid var(--line); border-radius:7px; background:white; color:var(--ink); font-size:10px; }
 .node-editor span { display:flex; gap:5px; }
@@ -330,7 +342,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
   .ai-content{padding:15px 14px 12px}.prompt-box{padding:11px 14px 13px}.suggestion{min-height:62px}.add-suggestion{width:32px;height:32px}.suggestion-heading button{min-height:36px;padding:0 6px}.quick-row button{min-height:36px;font-size:9px}
   .outline-view{padding:62px 10px 80px}.outline-view>header{align-items:start}.outline-view>header strong{display:none}.outline-row{gap:4px;padding-right:7px}.outline-actions{flex:0 0 85px}.outline-actions .transplant-outline-button,.outline-actions .edit-outline-button,.outline-actions .add-child-button{display:none}.outline-actions .reorder-button,.outline-actions .structure-button{display:inline-block;width:40px;min-height:40px}.outline-drag-handle{display:none}.outline-editor{grid-template-columns:1fr auto}.outline-editor input:nth-child(2){grid-column:1/-1}.outline-copy span{max-width:120px}
   .transplant-modal{padding:20px}.transplant-modal h2{font-size:18px}.transplant-modal footer button{min-height:44px;flex:1}
-  .mind-node{min-height:86px;padding-bottom:39px}.mind-node.ink{min-height:98px}.mind-node .node-actions{right:7px;bottom:6px;padding:2px;border-radius:18px;box-shadow:none}.mind-node .node-actions button{width:28px;height:28px;font-size:13px}
+  .mind-node{padding-bottom:39px}.mind-node.level-root{height:94px}.mind-node.level-branch{height:82px}.mind-node.level-detail{width:152px;height:70px;padding-bottom:34px}.mind-node .node-actions{right:7px;bottom:6px;padding:2px;border-radius:18px;box-shadow:none}.mind-node .node-actions button{width:28px;height:28px;font-size:13px}.mind-node.level-detail .node-actions button{width:24px;height:24px;font-size:12px}.branch-collapse-toggle{top:-24px;min-height:44px;padding-inline:11px;font-size:10px}
 }
 /* Cloud sync status dot + conflict banner + shared-map notice view */
 .status-dot.saving { background:var(--sun); box-shadow:0 0 0 3px #f6eecd; }

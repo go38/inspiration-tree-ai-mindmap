@@ -7,7 +7,9 @@ import {
   HISTORY_LIMIT,
   applyTreeNodeOffsets,
   autoLayoutNodes,
+  buildDepthMap,
   buildMarkdownLines,
+  calculateFitTransform,
   collectSubtreeIds,
   countConnectionCrossings,
   createCanvasBranchRibbons,
@@ -20,11 +22,13 @@ import {
   moveSiblingNode,
   nodeBounds,
   nodeBoundsOverlap,
+  nodeMetricsForDepth,
   outdentOutlineNode,
   pushHistory,
   reparentSubtree,
   reorderSiblingNodes,
   safeFilename,
+  visibleNodesForCollapsed,
 } from "../app/lib/mindmap.ts";
 
 /** Small fixture: center → A → A1, plus sibling B. */
@@ -48,6 +52,51 @@ test("depthOf counts steps from the root (root is depth 0)", () => {
   assert.equal(depthOf(nodes, nodes[0]), 0);
   assert.equal(depthOf(nodes, nodes[1]), 1);
   assert.equal(depthOf(nodes, nodes[2]), 2);
+});
+
+test("hierarchy metrics map root, first-level, and deeper nodes to large, medium, and small cards", () => {
+  const depths = buildDepthMap(sampleNodes());
+  assert.deepEqual([...depths.entries()], [[1, 0], [2, 1], [3, 2], [4, 1]]);
+  assert.deepEqual(nodeMetricsForDepth(0), { level: "root", width: 204, height: 94 });
+  assert.deepEqual(nodeMetricsForDepth(1), { level: "branch", width: 180, height: 82 });
+  assert.deepEqual(nodeMetricsForDepth(2), { level: "detail", width: 152, height: 70 });
+  assert.equal(nodeMetricsForDepth(8).level, "detail");
+});
+
+test("collapsed parents hide every descendant but remain visible themselves", () => {
+  const nodes = sampleNodes();
+  assert.deepEqual(visibleNodesForCollapsed(nodes, new Set([2])).map((node) => node.id), [1, 2, 4]);
+  assert.deepEqual(visibleNodesForCollapsed(nodes, new Set([1])).map((node) => node.id), [1]);
+  assert.equal(visibleNodesForCollapsed(nodes, new Set()), nodes);
+});
+
+test("fit transform centers the root and keeps an asymmetric map inside the safe viewport", () => {
+  const nodes = [
+    { id: 1, parent: null, text: "中心", note: "", x: 420, y: 300, tone: "ink" },
+    { id: 2, parent: 1, text: "左側遠端", note: "", x: -820, y: 20, tone: "coral" },
+    { id: 3, parent: 1, text: "右側", note: "", x: 720, y: 560, tone: "sage" },
+  ];
+  const depths = buildDepthMap(nodes);
+  const viewport = { width: 868, height: 744, top: 100, right: 24, bottom: 70, left: 24 };
+  const fit = calculateFitTransform(nodes, 1, viewport, { depthById: depths, maximumZoom: 200, minimumZoom: 10 });
+  const scale = fit.zoom / 100;
+  const stageCenter = { x: viewport.width / 2, y: viewport.height / 2 };
+  const rootBox = nodeBounds(nodes[0], 0);
+  const rootCenter = { x: rootBox.x + rootBox.width / 2, y: rootBox.y + rootBox.height / 2 };
+  const screenPoint = (x, y) => ({
+    x: stageCenter.x + fit.offset.x + scale * (x - 540),
+    y: stageCenter.y + fit.offset.y + scale * (y - 325),
+  });
+  assert.deepEqual(screenPoint(rootCenter.x, rootCenter.y), fit.target);
+  for (const node of nodes) {
+    const box = nodeBounds(node, depths.get(node.id));
+    const topLeft = screenPoint(box.x, box.y);
+    const bottomRight = screenPoint(box.x + box.width, box.y + box.height);
+    assert.ok(topLeft.x >= viewport.left - 1);
+    assert.ok(bottomRight.x <= viewport.width - viewport.right + 1);
+    assert.ok(topLeft.y >= viewport.top - 1);
+    assert.ok(bottomRight.y <= viewport.height - viewport.bottom + 1);
+  }
 });
 
 test("collectSubtreeIds gathers a node and all descendants", () => {
@@ -163,11 +212,15 @@ test("auto layout arranges 100 nodes without overlap, crossings, or two-sided cr
     { x: nodes[0].x, y: nodes[0].y },
     "center remains the layout anchor",
   );
+  const laidOutDepths = buildDepthMap(laidOut);
 
   for (let i = 0; i < laidOut.length; i++) {
     for (let j = i + 1; j < laidOut.length; j++) {
       assert.equal(
-        nodeBoundsOverlap(nodeBounds(laidOut[i]), nodeBounds(laidOut[j])),
+        nodeBoundsOverlap(
+          nodeBounds(laidOut[i], laidOutDepths.get(laidOut[i].id)),
+          nodeBounds(laidOut[j], laidOutDepths.get(laidOut[j].id)),
+        ),
         false,
         `nodes ${laidOut[i].id} and ${laidOut[j].id} must not overlap`,
       );

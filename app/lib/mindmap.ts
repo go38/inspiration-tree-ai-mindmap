@@ -20,6 +20,28 @@ export type HistoryState = {
 export type TreeNodeOffsets = Record<number, { x: number; y: number }>;
 
 export type HistoryShortcut = "undo" | "redo" | null;
+export type NodeVisualLevel = "root" | "branch" | "detail";
+
+export type NodeVisualMetrics = {
+  level: NodeVisualLevel;
+  width: number;
+  height: number;
+};
+
+export type FitViewport = {
+  width: number;
+  height: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+};
+
+export type FitTransform = {
+  zoom: number;
+  offset: { x: number; y: number };
+  target: { x: number; y: number };
+};
 
 export function historyShortcutForKey(event: {
   key: string;
@@ -39,20 +61,23 @@ export function historyShortcutForKey(event: {
 export const HISTORY_LIMIT = 15;
 
 const TONES = new Set(["ink", "coral", "sage", "sun"]);
-const LAYOUT_NODE_WIDTH = 180;
 const LAYOUT_ROOT_WIDTH = 204;
-const LAYOUT_NODE_HEIGHT = 70;
-const LAYOUT_ROOT_HEIGHT = 82;
+const LAYOUT_ROOT_HEIGHT = 94;
+const LAYOUT_BRANCH_WIDTH = 180;
+const LAYOUT_BRANCH_HEIGHT = 82;
+const LAYOUT_DETAIL_WIDTH = 152;
+const LAYOUT_DETAIL_HEIGHT = 70;
 const LAYOUT_COLUMN_GAP = 112;
 const LAYOUT_ROW_GAP = 28;
 const LAYOUT_COLLISION_GAP = 18;
 const RADIAL_MIN_RADIUS = 260;
-const RADIAL_LEVEL_GAP = 220;
-const RADIAL_NODE_CLEARANCE = 214;
+const RADIAL_LEVEL_GAP = 200;
 const TREE_STAGE_CENTER_X = 540;
 const TREE_ROOT_Y = 650;
 const TREE_LEVEL_GAP = 250;
 const TREE_LEAF_STEP = 212;
+export const MAP_STAGE_WIDTH = 1080;
+export const MAP_STAGE_HEIGHT = 650;
 
 type LayoutDirection = -1 | 1;
 
@@ -106,14 +131,37 @@ export function nextNodeId(nodes: NodeItem[]): number {
 
 /** Depth of a node from the root: root parent === null is depth 0. */
 export function depthOf(nodes: NodeItem[], node: NodeItem): number {
-  const byId = new Map(nodes.map((item) => [item.id, item]));
-  let depth = 0;
-  let current: NodeItem | undefined = node;
-  while (current && current.parent !== null) {
-    depth += 1;
-    current = byId.get(current.parent);
-  }
-  return depth;
+  return buildDepthMap(nodes).get(node.id) ?? (node.parent === null ? 0 : 1);
+}
+
+/** Build all hierarchy depths once so rendering and layout can share them. */
+export function buildDepthMap(nodes: NodeItem[]): Map<number, number> {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const depths = new Map<number, number>();
+  const resolve = (node: NodeItem, path: Set<number>): number => {
+    const existing = depths.get(node.id);
+    if (existing !== undefined) return existing;
+    if (node.parent === null) {
+      depths.set(node.id, 0);
+      return 0;
+    }
+    if (path.has(node.id)) {
+      depths.set(node.id, 1);
+      return 1;
+    }
+    const parent = byId.get(node.parent);
+    const depth = parent ? resolve(parent, new Set(path).add(node.id)) + 1 : 1;
+    depths.set(node.id, depth);
+    return depth;
+  };
+  nodes.forEach((node) => resolve(node, new Set()));
+  return depths;
+}
+
+export function nodeMetricsForDepth(depth: number): NodeVisualMetrics {
+  if (depth <= 0) return { level: "root", width: LAYOUT_ROOT_WIDTH, height: LAYOUT_ROOT_HEIGHT };
+  if (depth === 1) return { level: "branch", width: LAYOUT_BRANCH_WIDTH, height: LAYOUT_BRANCH_HEIGHT };
+  return { level: "detail", width: LAYOUT_DETAIL_WIDTH, height: LAYOUT_DETAIL_HEIGHT };
 }
 
 /** Ids of a node and all of its descendants (the whole subtree). */
@@ -133,12 +181,13 @@ export function collectSubtreeIds(nodes: NodeItem[], rootId: number): Set<number
 }
 
 /** Rendered node size used by fit-to-view, auto-layout, and overlap tests. */
-export function nodeBounds(node: NodeItem): NodeBounds {
+export function nodeBounds(node: NodeItem, depth = node.parent === null ? 0 : 1): NodeBounds {
+  const metrics = nodeMetricsForDepth(depth);
   return {
     x: node.x,
     y: node.y,
-    width: node.tone === "ink" ? LAYOUT_ROOT_WIDTH : LAYOUT_NODE_WIDTH,
-    height: node.tone === "ink" ? LAYOUT_ROOT_HEIGHT : LAYOUT_NODE_HEIGHT,
+    width: metrics.width,
+    height: metrics.height,
   };
 }
 
@@ -150,6 +199,79 @@ export function nodeBoundsOverlap(a: NodeBounds, b: NodeBounds, gap = 0): boolea
     a.y < b.y + b.height + gap &&
     a.y + a.height + gap > b.y
   );
+}
+
+/** Nodes visible after hiding every descendant of a collapsed parent. */
+export function visibleNodesForCollapsed(nodes: NodeItem[], collapsedIds: Set<number>): NodeItem[] {
+  if (collapsedIds.size === 0) return nodes;
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.filter((node) => {
+    let current = node.parent === null ? undefined : byId.get(node.parent);
+    const visited = new Set<number>();
+    while (current && !visited.has(current.id)) {
+      if (collapsedIds.has(current.id)) return false;
+      visited.add(current.id);
+      current = current.parent === null ? undefined : byId.get(current.parent);
+    }
+    return true;
+  });
+}
+
+/**
+ * Fit visible nodes around a hierarchy anchor inside the unobscured viewport.
+ * Translation is returned in screen pixels because the stage uses
+ * translate(...) scale(...), so the scale must be included in the offset.
+ */
+export function calculateFitTransform(
+  nodes: NodeItem[],
+  anchorId: number,
+  viewport: FitViewport,
+  options: {
+    depthById?: Map<number, number>;
+    maximumZoom?: number;
+    minimumZoom?: number;
+    targetXRatio?: number;
+    targetYRatio?: number;
+  } = {},
+): FitTransform {
+  if (nodes.length === 0) {
+    return { zoom: 100, offset: { x: 0, y: 0 }, target: { x: viewport.width / 2, y: viewport.height / 2 } };
+  }
+  const depths = options.depthById ?? buildDepthMap(nodes);
+  const bounds = nodes.map((node) => nodeBounds(node, depths.get(node.id) ?? 1));
+  const minX = Math.min(...bounds.map((box) => box.x));
+  const maxX = Math.max(...bounds.map((box) => box.x + box.width));
+  const minY = Math.min(...bounds.map((box) => box.y));
+  const maxY = Math.max(...bounds.map((box) => box.y + box.height));
+  const anchor = nodes.find((node) => node.id === anchorId) ?? nodes[0];
+  const anchorBounds = nodeBounds(anchor, depths.get(anchor.id) ?? 0);
+  const anchorX = anchorBounds.x + anchorBounds.width / 2;
+  const anchorY = anchorBounds.y + anchorBounds.height / 2;
+  const left = Math.max(0, viewport.left ?? 0);
+  const top = Math.max(0, viewport.top ?? 0);
+  const right = Math.max(left + 1, viewport.width - Math.max(0, viewport.right ?? 0));
+  const bottom = Math.max(top + 1, viewport.height - Math.max(0, viewport.bottom ?? 0));
+  const targetX = left + (right - left) * (options.targetXRatio ?? .5);
+  const targetY = top + (bottom - top) * (options.targetYRatio ?? .5);
+  const ratios = [
+    (targetX - left) / Math.max(anchorX - minX, 1),
+    (right - targetX) / Math.max(maxX - anchorX, 1),
+    (targetY - top) / Math.max(anchorY - minY, 1),
+    (bottom - targetY) / Math.max(maxY - anchorY, 1),
+  ];
+  const maximumScale = (options.maximumZoom ?? 200) / 100;
+  const minimumScale = (options.minimumZoom ?? 10) / 100;
+  const rawScale = Math.min(maximumScale, ...ratios);
+  const zoom = Math.max(options.minimumZoom ?? 10, Math.floor(Math.max(minimumScale, rawScale) * 100));
+  const scale = zoom / 100;
+  return {
+    zoom,
+    offset: {
+      x: targetX - viewport.width / 2 - scale * (anchorX - MAP_STAGE_WIDTH / 2),
+      y: targetY - viewport.height / 2 - scale * (anchorY - MAP_STAGE_HEIGHT / 2),
+    },
+    target: { x: targetX, y: targetY },
+  };
 }
 
 /**
@@ -249,17 +371,22 @@ function layoutRadialMap(nodes: NodeItem[], root: NodeItem): NodeItem[] {
         const next = index === angles.length - 1 ? angles[0] + Math.PI * 2 : angles[index + 1];
         minimumGap = Math.min(minimumGap, next - angles[index]);
       }
-      requiredForLevel = RADIAL_NODE_CLEARANCE / Math.max(2 * Math.sin(minimumGap / 2), .02);
+      const metrics = nodeMetricsForDepth(depth);
+      const clearance = Math.max(metrics.width + 34, metrics.height + 42);
+      requiredForLevel = clearance / Math.max(2 * Math.sin(minimumGap / 2), .02);
     }
+    const previousMetrics = nodeMetricsForDepth(depth - 1);
+    const metrics = nodeMetricsForDepth(depth);
+    const levelGap = (previousMetrics.width + metrics.width) / 2 + (depth === 1 ? 58 : 46);
     const radius = Math.ceil(Math.max(
-      depth === 1 ? RADIAL_MIN_RADIUS : previousRadius + RADIAL_LEVEL_GAP,
+      depth === 1 ? RADIAL_MIN_RADIUS : previousRadius + Math.max(RADIAL_LEVEL_GAP, levelGap),
       requiredForLevel,
     ));
     radiusByDepth.set(depth, radius);
     previousRadius = radius;
   }
 
-  const rootBounds = nodeBounds(root);
+  const rootBounds = nodeBounds(root, 0);
   const centerX = root.x + rootBounds.width / 2;
   const centerY = root.y + rootBounds.height / 2;
   let changed = false;
@@ -268,7 +395,7 @@ function layoutRadialMap(nodes: NodeItem[], root: NodeItem): NodeItem[] {
     const depth = depthById.get(node.id) ?? 1;
     const angle = angleById.get(node.id) ?? -Math.PI / 2;
     const radius = radiusByDepth.get(depth) ?? RADIAL_MIN_RADIUS;
-    const bounds = nodeBounds(node);
+    const bounds = nodeBounds(node, depth);
     const x = Math.round(centerX + Math.cos(angle) * radius - bounds.width / 2);
     const y = Math.round(centerY + Math.sin(angle) * radius - bounds.height / 2);
     if (node.x === x && node.y === y) return node;
@@ -291,6 +418,7 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
   if (nodes.length < 2) return nodes;
 
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const depthById = buildDepthMap(nodes);
   const center = nodes.find((node) => node.parent === null);
   const target = rootId === undefined ? center : byId.get(rootId);
   if (!center || !target) return nodes;
@@ -323,8 +451,9 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
       reachable.add(node.id);
       const children = (childrenByParent.get(node.id) ?? []).filter((child) => !visited.has(child.id));
       if (children.length === 0) {
-        const centerY = nextLeafCenter;
-        nextLeafCenter += LAYOUT_NODE_HEIGHT + LAYOUT_ROW_GAP;
+        const bounds = nodeBounds(node, depthById.get(node.id) ?? 1);
+        const centerY = nextLeafCenter + bounds.height / 2;
+        nextLeafCenter += bounds.height + LAYOUT_ROW_GAP;
         centers.set(node.id, centerY);
         return centerY;
       }
@@ -337,27 +466,29 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
     roots.forEach(arrangeY);
     const laidOutCenters = [...centers.values()];
     const forestMiddle = (Math.min(...laidOutCenters) + Math.max(...laidOutCenters)) / 2;
-    const anchorCenterY = anchor.y + nodeBounds(anchor).height / 2;
+    const anchorCenterY = anchor.y + nodeBounds(anchor, depthById.get(anchor.id) ?? 0).height / 2;
 
-    const assignX = (node: NodeItem, depth: number, path: Set<number>) => {
+    const assignX = (node: NodeItem, parentNode: NodeItem, path: Set<number>) => {
       if (path.has(node.id)) return;
       const nextPath = new Set(path).add(node.id);
-      const anchorBounds = nodeBounds(anchor);
+      const parentPosition = positioned.get(parentNode.id) ?? { x: parentNode.x, y: parentNode.y };
+      const parentBounds = nodeBounds(parentNode, depthById.get(parentNode.id) ?? 0);
+      const bounds = nodeBounds(node, depthById.get(node.id) ?? 1);
       const x = direction > 0
-        ? anchor.x + anchorBounds.width + LAYOUT_COLUMN_GAP + (depth - 1) * (LAYOUT_NODE_WIDTH + LAYOUT_COLUMN_GAP)
-        : anchor.x - LAYOUT_COLUMN_GAP - LAYOUT_NODE_WIDTH - (depth - 1) * (LAYOUT_NODE_WIDTH + LAYOUT_COLUMN_GAP);
+        ? parentPosition.x + parentBounds.width + LAYOUT_COLUMN_GAP
+        : parentPosition.x - LAYOUT_COLUMN_GAP - bounds.width;
       const centerY = (centers.get(node.id) ?? forestMiddle) - forestMiddle + anchorCenterY;
-      positioned.set(node.id, { x, y: centerY - nodeBounds(node).height / 2 });
-      (childrenByParent.get(node.id) ?? []).forEach((child) => assignX(child, depth + 1, nextPath));
+      positioned.set(node.id, { x, y: centerY - bounds.height / 2 });
+      (childrenByParent.get(node.id) ?? []).forEach((child) => assignX(child, node, nextPath));
     };
 
-    roots.forEach((root) => assignX(root, 1, new Set([anchor.id])));
+    roots.forEach((root) => assignX(root, anchor, new Set([anchor.id])));
   };
 
   {
     const parent = byId.get(target.parent);
-    const parentCenterX = parent ? parent.x + nodeBounds(parent).width / 2 : target.x;
-    const targetCenterX = target.x + nodeBounds(target).width / 2;
+    const parentCenterX = parent ? parent.x + nodeBounds(parent, depthById.get(parent.id) ?? 0).width / 2 : target.x;
+    const targetCenterX = target.x + nodeBounds(target, depthById.get(target.id) ?? 1).width / 2;
     const direction: LayoutDirection = targetCenterX < parentCenterX ? -1 : 1;
     layoutForest(target, childrenByParent.get(target.id) ?? [], direction);
 
@@ -370,9 +501,9 @@ export function autoLayoutNodes(nodes: NodeItem[], rootId?: number): NodeItem[] 
     const fixed = nodes.filter((node) => !reachable.has(node.id));
     const forbiddenOffsets: [number, number][] = [];
     for (const candidate of candidates) {
-      const candidateBox = nodeBounds(candidate);
+      const candidateBox = nodeBounds(candidate, depthById.get(candidate.id) ?? 1);
       for (const fixedNode of fixed) {
-        const fixedBox = nodeBounds(fixedNode);
+        const fixedBox = nodeBounds(fixedNode, depthById.get(fixedNode.id) ?? 1);
         const horizontalConflict =
           candidateBox.x < fixedBox.x + fixedBox.width + LAYOUT_COLLISION_GAP &&
           candidateBox.x + candidateBox.width + LAYOUT_COLLISION_GAP > fixedBox.x;
@@ -487,7 +618,7 @@ export function layoutTreeViewNodes(nodes: NodeItem[]): NodeItem[] {
   }
   return nodes.map((node) => {
     const depth = depthById.get(node.id) ?? 1;
-    const bounds = nodeBounds(node);
+    const bounds = nodeBounds(node, depth);
     const centerX = TREE_STAGE_CENTER_X + ((centerSlotById.get(node.id) ?? leafMiddle) - leafMiddle) * TREE_LEAF_STEP;
     // Small alternating lift gives the crown a natural rhythm while the
     // generous level gap still guarantees children remain above parents.
@@ -689,9 +820,13 @@ export type CanvasRibbon = {
   end: { x: number; y: number };
 };
 
-function nodeBoundaryPoint(node: NodeItem, toward: NodeItem): { x: number; y: number } {
-  const bounds = nodeBounds(node);
-  const towardBounds = nodeBounds(toward);
+function nodeBoundaryPoint(
+  node: NodeItem,
+  toward: NodeItem,
+  depthById: Map<number, number>,
+): { x: number; y: number } {
+  const bounds = nodeBounds(node, depthById.get(node.id) ?? 1);
+  const towardBounds = nodeBounds(toward, depthById.get(toward.id) ?? 1);
   const centerX = node.x + bounds.width / 2;
   const centerY = node.y + bounds.height / 2;
   const targetX = toward.x + towardBounds.width / 2;
@@ -715,12 +850,13 @@ function nodeBoundaryPoint(node: NodeItem, toward: NodeItem): { x: number; y: nu
  */
 export function createCanvasBranchRibbons(nodes: NodeItem[]): CanvasRibbon[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const depthById = buildDepthMap(nodes);
   return nodes.flatMap((node) => {
     const parent = node.parent === null ? undefined : byId.get(node.parent);
     if (!parent) return [];
-    const start = nodeBoundaryPoint(parent, node);
-    const end = nodeBoundaryPoint(node, parent);
-    const depth = depthOf(nodes, node);
+    const start = nodeBoundaryPoint(parent, node, depthById);
+    const end = nodeBoundaryPoint(node, parent, depthById);
+    const depth = depthById.get(node.id) ?? 1;
     const thickness = Math.max(4, 10 - (depth - 1) * 3);
     const curve = createCurvedRibbon(
       start.x,
@@ -808,6 +944,7 @@ function ribbonCenterPath(curve: ReturnType<typeof createCurvedRibbon>): string 
 export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
   if (nodes.length < 2) return [];
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const depthById = buildDepthMap(nodes);
   const childrenByParent = new Map<number, NodeItem[]>();
   for (const node of nodes) {
     if (node.parent === null || !byId.has(node.parent)) continue;
@@ -820,15 +957,15 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
   for (const parent of nodes) {
     const children = childrenByParent.get(parent.id) ?? [];
     if (children.length === 0) continue;
-    const parentBox = nodeBounds(parent);
+    const parentDepth = depthById.get(parent.id) ?? 0;
+    const parentBox = nodeBounds(parent, parentDepth);
     const parentX = parent.x + parentBox.width / 2;
     const parentY = parent.y;
-    const parentDepth = depthOf(nodes, parent);
     const trunkWidth = Math.max(8, 22 - parentDepth * 6);
 
     if (children.length === 1) {
       const child = children[0];
-      const childBox = nodeBounds(child);
+      const childBox = nodeBounds(child, depthById.get(child.id) ?? 1);
       const endX = child.x + childBox.width / 2;
       const endY = child.y + childBox.height;
       const curve = createCurvedRibbon(
@@ -852,11 +989,11 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
     }
 
     const orderedChildren = [...children].sort((a, b) => {
-      const aCenter = a.x + nodeBounds(a).width / 2;
-      const bCenter = b.x + nodeBounds(b).width / 2;
+      const aCenter = a.x + nodeBounds(a, depthById.get(a.id) ?? 1).width / 2;
+      const bCenter = b.x + nodeBounds(b, depthById.get(b.id) ?? 1).width / 2;
       return aCenter - bCenter;
     });
-    const childCenters = orderedChildren.map((child) => child.x + nodeBounds(child).width / 2);
+    const childCenters = orderedChildren.map((child) => child.x + nodeBounds(child, depthById.get(child.id) ?? 1).width / 2);
     const maxHorizontalDistance = Math.max(
       1,
       ...childCenters.map((center) => Math.abs(center - parentX)),
@@ -864,7 +1001,7 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
     const branchStarts = orderedChildren.map((child, index) => {
       const distance = childCenters[index] - parentX;
       const edgeRatio = Math.abs(distance) / maxHorizontalDistance;
-      const childBottom = child.y + nodeBounds(child).height;
+      const childBottom = child.y + nodeBounds(child, depthById.get(child.id) ?? 1).height;
       const availableRise = Math.max(42, parentY - childBottom);
       const desiredRise = 48 + (1 - edgeRatio) * 72;
       const rise = Math.min(desiredRise, Math.max(38, availableRise * .72));
@@ -896,7 +1033,7 @@ export function createTreeBranchRibbons(nodes: NodeItem[]): TreeRibbon[] {
     });
 
     branchStarts.forEach(({ child, x, y, edgeRatio }, index) => {
-      const childBox = nodeBounds(child);
+      const childBox = nodeBounds(child, depthById.get(child.id) ?? 1);
       const endX = child.x + childBox.width / 2;
       const endY = child.y + childBox.height;
       const branchWidth = Math.max(5.5, trunkWidth * (.38 + (1 - edgeRatio) * .12));

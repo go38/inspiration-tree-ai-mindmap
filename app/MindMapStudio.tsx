@@ -5,7 +5,9 @@ import Link from "next/link";
 import {
   applyTreeNodeOffsets,
   autoLayoutNodes,
+  buildDepthMap,
   buildMarkdownLines,
+  calculateFitTransform,
   collectSubtreeIds,
   createCanvasBranchRibbons,
   createTreeBranchRibbons,
@@ -16,11 +18,13 @@ import {
   moveSiblingNode,
   nextNodeId,
   nodeBounds,
+  nodeMetricsForDepth,
   outdentOutlineNode,
   pushHistory,
   reparentSubtree,
   reorderSiblingNodes,
   safeFilename,
+  visibleNodesForCollapsed,
   type HistoryState,
   type NodeItem,
   type TreeNodeOffsets,
@@ -44,6 +48,7 @@ import {
   saveInboxSeeds,
   type InspirationSeed,
 } from "./lib/inbox";
+import { loadMapViewState, saveMapViewState } from "./lib/viewState";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -118,7 +123,7 @@ type NodeDrag = {
   before?: HistoryState;
 };
 
-const MIN_ZOOM = 50;
+const MIN_ZOOM = 10;
 const MAX_ZOOM = 200;
 const TREE_TONE_COLORS: Record<"trunk" | NodeItem["tone"], string> = {
   trunk: "#7a5635",
@@ -201,8 +206,11 @@ export default function MindMapStudio({
   const pointerFrame = useRef<number | null>(null);
   const pendingPointer = useRef<PointerPosition | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const commandBarRef = useRef<HTMLDivElement | null>(null);
+  const zoomControlRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
   const inboxHydrated = useRef(false);
+  const skipNextViewStateSave = useRef(true);
   const saveTimer = useRef<number | null>(null);
   const toastTimer = useRef<number | null>(null);
   const version = useRef(persistence.mode === "cloud" ? persistence.version : 1);
@@ -221,6 +229,7 @@ export default function MindMapStudio({
   }, [documentTitle, nodes, selectedId]);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const inboxScope = persistence.mode === "cloud" ? persistence.mapId : "local";
+  const viewStateScope = inboxScope;
   const inboxTarget = nodes.find((node) => node.id === inboxTargetId) ?? selected;
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const fallbackSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
@@ -230,17 +239,18 @@ export default function MindMapStudio({
   const pendingExpansion = generatedExpansion.filter((suggestion) => !existingChildTitles.has(suggestion.title.trim().toLocaleLowerCase("zh-TW")));
   const visibleExplanation = explanationForNodeId === selected.id ? aiExplanation : null;
 
-  const visibleNodes = useMemo(() => {
-    const byId = new Map(nodes.map((node) => [node.id, node]));
-    return nodes.filter((node) => {
-      let current = node.parent === null ? undefined : byId.get(node.parent);
-      while (current) {
-        if (collapsedIds.has(current.id)) return false;
-        current = current.parent === null ? undefined : byId.get(current.parent);
-      }
-      return true;
+  const depthById = useMemo(() => buildDepthMap(nodes), [nodes]);
+  const childCountById = useMemo(() => {
+    const counts = new Map<number, number>();
+    nodes.forEach((node) => {
+      if (node.parent !== null) counts.set(node.parent, (counts.get(node.parent) ?? 0) + 1);
     });
-  }, [collapsedIds, nodes]);
+    return counts;
+  }, [nodes]);
+  const visibleNodes = useMemo(
+    () => visibleNodesForCollapsed(nodes, collapsedIds),
+    [collapsedIds, nodes],
+  );
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
   const baseTreeNodes = useMemo(
     () => viewMode === "tree" ? layoutTreeViewNodes(visibleNodes) : [],
@@ -465,6 +475,29 @@ export default function MindMapStudio({
   }, [inboxScope, inboxSeeds]);
 
   useEffect(() => {
+    skipNextViewStateSave.current = true;
+    const saved = loadMapViewState(viewStateScope);
+    setCollapsedIds(new Set(saved.collapsedIds));
+  }, [viewStateScope]);
+
+  useEffect(() => {
+    if (skipNextViewStateSave.current) {
+      skipNextViewStateSave.current = false;
+      return;
+    }
+    saveMapViewState(viewStateScope, collapsedIds);
+  }, [collapsedIds, viewStateScope]);
+
+  useEffect(() => {
+    const validIds = new Set(nodes.map((node) => node.id));
+    const cleanedIds = [...collapsedIds].filter((id) => validIds.has(id));
+
+    if (cleanedIds.length !== collapsedIds.size) {
+      setCollapsedIds(new Set(cleanedIds));
+    }
+  }, [collapsedIds, nodes]);
+
+  useEffect(() => {
     if (persistence.mode !== "cloud") return;
     const protectCurrentDraft = () => {
       if (!needsCloudSync.current) return;
@@ -506,6 +539,7 @@ export default function MindMapStudio({
     setNodes(initialNodes);
     setSelectedId(1);
     setTreeOffsets({});
+    setCollapsedIds(new Set());
     clearDraft();
     flashToast("已重設為預設範例");
   }
@@ -539,6 +573,7 @@ export default function MindMapStudio({
     const roots = conflict.nodes.filter((node) => node.parent === null);
     setNodes(conflict.nodes);
     setTreeOffsets({});
+    setCollapsedIds(new Set());
     setSelectedId(roots[0]?.id ?? conflict.nodes[0]?.id ?? 1);
     version.current = conflict.version;
     if (persistence.mode === "cloud") clearCloudDraft(persistence.mapId);
@@ -698,11 +733,17 @@ export default function MindMapStudio({
     setTreeOffsets((current) => Object.fromEntries(
       Object.entries(current).filter(([id]) => !removedIds.has(Number(id))),
     ));
+    setCollapsedIds((current) => new Set([...current].filter((id) => !removedIds.has(id))));
     setSelectedId(target.parent);
     flashToast(removedIds.size > 1 ? `已移除「${target.text}」及 ${removedIds.size - 1} 個子節點` : `已移除「${target.text}」`, 2200);
   }
 
   function toggleCollapsed(id: number) {
+    const isCollapsing = !collapsedIds.has(id);
+    if (isCollapsing) {
+      const hiddenSubtree = collectSubtreeIds(nodes, id);
+      if (hiddenSubtree.has(selectedId)) setSelectedId(id);
+    }
     setCollapsedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -749,7 +790,7 @@ export default function MindMapStudio({
       const nextDisplay = viewMode === "tree"
         ? applyTreeNodeOffsets(layoutTreeViewNodes(arranged), treeOffsets)
         : arranged;
-      window.requestAnimationFrame(() => fitNodesToView(nextDisplay, message, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode === "tree" ? 0 : 40));
+      window.requestAnimationFrame(() => fitNodesToView(nextDisplay, message, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode));
     }
   }
 
@@ -810,7 +851,7 @@ export default function MindMapStudio({
       const nextDisplay = viewMode === "tree"
         ? applyTreeNodeOffsets(layoutTreeViewNodes(arranged), treeOffsets)
         : arranged;
-      fitNodesToView(nextDisplay, `AI 已擴寫 ${created.length} 個子節點，可復原`, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode === "tree" ? 0 : 40);
+      fitNodesToView(nextDisplay, `AI 已擴寫 ${created.length} 個子節點，可復原`, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode);
     });
   }
 
@@ -821,26 +862,43 @@ export default function MindMapStudio({
     flashToast("概念解釋已設為節點說明，可復原", 2200);
   }
 
-  function fitNodesToView(items: NodeItem[], message = "已將心智圖調整至畫面中央", maximumZoom = MAX_ZOOM, verticalBias = 40) {
+  function fitNodesToView(
+    items: NodeItem[],
+    message = "已將心智圖調整至畫面中央",
+    maximumZoom = MAX_ZOOM,
+    mode: ViewMode = viewMode,
+  ) {
     if (!items.length) return;
     const rect = canvasRef.current?.getBoundingClientRect();
-    const bounds = items.map(nodeBounds);
-    const minX = Math.min(...bounds.map((box) => box.x));
-    const maxX = Math.max(...bounds.map((box) => box.x + box.width));
-    const minY = Math.min(...bounds.map((box) => box.y));
-    const maxY = Math.max(...bounds.map((box) => box.y + box.height));
-    const verticalPadding = verticalBias > 0 ? 150 : 90;
-    const nextZoom = rect
-      ? Math.round(Math.max(MIN_ZOOM, Math.min(maximumZoom, Math.min((rect.width - 70) / Math.max(maxX - minX, 1), (rect.height - verticalPadding) / Math.max(maxY - minY, 1)) * 100)) / 10) * 10
-      : 100;
-    setZoom(nextZoom);
-    setStageOffset({ x: 540 - (minX + maxX) / 2, y: 325 + verticalBias - (minY + maxY) / 2 });
+    if (!rect) return;
+    const commandRect = commandBarRef.current?.getBoundingClientRect();
+    const zoomRect = zoomControlRef.current?.getBoundingClientRect();
+    const top = Math.max(24, commandRect ? commandRect.bottom - rect.top + 18 : 86);
+    const mobileBottom = window.innerWidth <= 760 ? 86 : 24;
+    const bottom = Math.max(
+      mobileBottom,
+      zoomRect ? rect.bottom - zoomRect.top + 16 : 70,
+    );
+    const root = items.find((node) => node.parent === null) ?? items[0];
+    const fit = calculateFitTransform(
+      items,
+      root.id,
+      { width: rect.width, height: rect.height, top, right: 24, bottom, left: 24 },
+      {
+        depthById: buildDepthMap(items),
+        maximumZoom,
+        minimumZoom: MIN_ZOOM,
+        targetYRatio: mode === "tree" ? .82 : .5,
+      },
+    );
+    setZoom(fit.zoom);
+    setStageOffset(fit.offset);
     setStagePan({ x: 0, y: 0 });
     flashToast(message);
   }
 
   function fitToView() {
-    fitNodesToView(displayNodes, viewMode === "tree" ? "已將整棵靈感樹調整至畫面中央" : undefined, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode === "tree" ? 0 : 40);
+    fitNodesToView(displayNodes, viewMode === "tree" ? "已將整棵靈感樹調整至畫面中央" : undefined, viewMode === "tree" ? 110 : MAX_ZOOM, viewMode);
   }
 
   function selectViewMode(mode: ViewMode) {
@@ -850,7 +908,7 @@ export default function MindMapStudio({
       ? applyTreeNodeOffsets(layoutTreeViewNodes(visibleNodes), treeOffsets)
       : visibleNodes;
     window.requestAnimationFrame(() => {
-      fitNodesToView(nextDisplay, mode === "tree" ? "已切換至樹狀檢視" : "已切換至心智圖檢視", mode === "tree" ? 110 : MAX_ZOOM, mode === "tree" ? 0 : 40);
+      fitNodesToView(nextDisplay, mode === "tree" ? "已切換至樹狀檢視" : "已切換至心智圖檢視", mode === "tree" ? 110 : MAX_ZOOM, mode);
     });
   }
 
@@ -865,7 +923,7 @@ export default function MindMapStudio({
         applyTreeNodeOffsets(baseTreeNodes, nextOffsets),
         branchRootId === undefined ? "樹冠已依層級自動整理" : "分枝已依層級展開",
         110,
-        0,
+        "tree",
       );
       return;
     }
@@ -1162,10 +1220,11 @@ export default function MindMapStudio({
       const exportNodes = viewMode === "tree" ? treeNodes : nodes;
       ctx.fillStyle = "#fffcf6"; ctx.font = "600 36px sans-serif"; ctx.fillText(viewMode === "tree" ? "靈感樹 · 樹狀檢視" : "靈感樹 · 心智圖", 58, 68);
       ctx.fillStyle = "#cfc9bd"; ctx.font = "20px sans-serif"; ctx.fillText(new Date().toLocaleDateString("zh-TW"), 1450, 66);
+      const exportDepths = buildDepthMap(exportNodes);
       const minX = Math.min(...exportNodes.map((node) => node.x));
-      const maxX = Math.max(...exportNodes.map((node) => node.x + (node.tone === "ink" ? 204 : 180)));
+      const maxX = Math.max(...exportNodes.map((node) => node.x + nodeBounds(node, exportDepths.get(node.id) ?? 1).width));
       const minY = Math.min(...exportNodes.map((node) => node.y));
-      const maxY = Math.max(...exportNodes.map((node) => node.y + (node.tone === "ink" ? 82 : 70)));
+      const maxY = Math.max(...exportNodes.map((node) => node.y + nodeBounds(node, exportDepths.get(node.id) ?? 1).height));
       const scale = Math.min(1500 / Math.max(maxX - minX, 1), 960 / Math.max(maxY - minY, 1), 1.65);
       const ox = (width - (maxX - minX) * scale) / 2 - minX * scale;
       const oy = 150 + (960 - (maxY - minY) * scale) / 2 - minY * scale;
@@ -1187,7 +1246,8 @@ export default function MindMapStudio({
       });
       exportNodes.forEach((node) => {
         const x = ox + node.x * scale, y = oy + node.y * scale;
-        const w = (node.tone === "ink" ? 204 : 180) * scale, h = (node.tone === "ink" ? 82 : 70) * scale;
+        const metrics = nodeMetricsForDepth(exportDepths.get(node.id) ?? 1);
+        const w = metrics.width * scale, h = metrics.height * scale;
         ctx.fillStyle = node.tone === "ink" ? "#211f1a" : "#fffcf6";
         ctx.strokeStyle = node.tone === "sage" ? "#7f9876" : node.tone === "sun" ? "#d8ad44" : node.tone === "ink" ? "#211f1a" : "#ed765f";
         ctx.lineWidth = Math.max(3, 5 * scale); ctx.beginPath(); ctx.roundRect(x, y, w, h, 14 * scale); ctx.fill(); ctx.stroke();
@@ -1413,7 +1473,7 @@ export default function MindMapStudio({
         </aside>
 
         <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${viewMode === "tree" ? "tree-active" : ""} ${panning ? "panning" : ""} ${draggingId !== null ? "dragging-node" : ""}`} onPointerDown={beginCanvasPan} onPointerMove={onPointerMove} onPointerUp={endPointerInteraction} onPointerCancel={endPointerInteraction}>
-          <div className="canvas-commandbar">
+          <div ref={commandBarRef} className="canvas-commandbar">
             <div className="view-switch" role="group" aria-label="檢視模式"><button className={viewMode === "canvas" ? "active" : ""} onClick={() => selectViewMode("canvas")}>心智圖</button><button className={viewMode === "tree" ? "active" : ""} onClick={() => selectViewMode("tree")}>樹狀</button><button className={viewMode === "outline" ? "active" : ""} onClick={() => selectViewMode("outline")}>大綱</button></div>
             <label className="node-search"><span aria-hidden="true">⌕</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜尋節點" aria-label="搜尋節點" /></label>
             <button className="layout-button" data-testid="auto-layout-all" onClick={() => applyAutoLayout()}>智慧整理</button>
@@ -1449,29 +1509,38 @@ export default function MindMapStudio({
             </svg>
             {displayNodes.map((node) => {
               const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
-              const hasChildren = nodes.some((item) => item.parent === node.id);
+              const childCount = childCountById.get(node.id) ?? 0;
+              const hasChildren = childCount > 0;
+              const visualLevel = nodeMetricsForDepth(depthById.get(node.id) ?? 1).level;
+              const isCollapsed = collapsedIds.has(node.id);
               return (
               <article
                 key={node.id}
-                className={`mind-node ${node.tone} ${viewMode === "tree" ? "tree-node" : ""} ${viewMode === "tree" && !hasChildren ? "tree-leaf" : ""} ${node.id === selectedId ? "selected" : ""} ${node.id === draggingId ? "dragging" : ""} ${matchesSearch ? "search-match" : ""}`}
+                className={`mind-node ${node.tone} level-${visualLevel} ${viewMode === "tree" ? "tree-node" : ""} ${viewMode === "tree" && !hasChildren ? "tree-leaf" : ""} ${node.id === selectedId ? "selected" : ""} ${node.id === draggingId ? "dragging" : ""} ${isCollapsed ? "collapsed" : ""} ${matchesSearch ? "search-match" : ""}`}
                 style={{ left: node.x, top: node.y }}
                 onPointerDown={(event) => beginNodeDrag(event, node)}
                 onDoubleClick={() => beginEdit(node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div className="node-copy"><h3>{node.text}</h3><p>{node.note}</p></div>}
+                {editingId !== node.id && node.id === selectedId && hasChildren && <button
+                  type="button"
+                  className="branch-collapse-toggle"
+                  data-testid={`collapse-branch-${node.id}`}
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${isCollapsed ? "展開" : "收合"}${node.text}分支，共 ${childCount} 個直屬子節點`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => { event.stopPropagation(); toggleCollapsed(node.id); }}
+                ><span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>{isCollapsed ? "展開" : "收合"} {childCount}</button>}
                 {editingId !== node.id && <div className="node-actions">
                   <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginEdit(node); }} aria-label={`編輯${node.text}`}>✎</button>
-                  {hasChildren && <>
-                    <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); toggleCollapsed(node.id); }} aria-label={`${collapsedIds.has(node.id) ? "展開" : "收合"}${node.text}`}>{collapsedIds.has(node.id) ? "▸" : "▾"}</button>
-                    <button data-testid={`auto-layout-branch-${node.id}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); applyAutoLayout(node.id); }} aria-label={`智慧整理${node.text}分支`}>⌗</button>
-                  </>}
+                  {hasChildren && <button data-testid={`auto-layout-branch-${node.id}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); applyAutoLayout(node.id); }} aria-label={`智慧整理${node.text}分支`}>⌗</button>}
                   {node.parent !== null && <button data-testid={`transplant-node-${node.id}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginTransplant(node); }} aria-label={`移植${node.text}分支`} aria-haspopup="dialog">⇢</button>}
                   <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); addNode(node.id); }} aria-label={`在${node.text}下新增節點`}>＋</button>
                 </div>}
               </article>
             );})}
           </div>
-          <div className="zoom-control"><button onClick={() => setZoom(Math.max(MIN_ZOOM, zoom - 10))} aria-label="縮小，最低 50%" title="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + 10))} aria-label="放大，最高 200%" title="放大">＋</button><button onClick={fitToView} aria-label="適合畫面" title="適合畫面">◎</button></div>
+          <div ref={zoomControlRef} className="zoom-control"><button onClick={() => setZoom(Math.max(MIN_ZOOM, zoom - 10))} aria-label="縮小，最低 10%" title="縮小">−</button><span>{zoom}%</span><button onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + 10))} aria-label="放大，最高 200%" title="放大">＋</button><button onClick={fitToView} aria-label="適合畫面" title="適合畫面">◎</button></div>
           </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>拖曳同層排序；使用縮排／凸排調整分支層級</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
             const hasChildren = nodes.some((item) => item.parent === node.id);
             const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);

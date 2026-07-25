@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.18.1`
+- 目前產品版本：`v0.19.0`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -36,6 +36,7 @@ This starter does not use `wrangler.jsonc`.
 - `app/layout.tsx`：網站中繼資料與語言設定
 - `app/lib/mindmap.ts`：心智圖純函式（節點/歷史/匯出邏輯），與 UI 解耦以利單元測試
 - `app/lib/inbox.ts`：靈感種子的解析、去重、版本化本機保存與 AI 建議轉換
+- `app/lib/viewState.ts`：依地圖隔離的版本化本機檢視狀態（目前保存分支收合）
 - `app/lib/workspace.ts`：個人地圖所有權、建立、重新命名與封存驗證邏輯
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
@@ -43,6 +44,12 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.19.0 重點
+
+- 「適合畫面」會扣除工具列與手機 AI 面板的安全範圍，以中心主題為錨點完整顯示可見節點；大型地圖最低可縮至 10%。
+- 智慧整理依子樹規模分配扇區，中心、第一層與第二層以後分別使用大、中、小卡片，畫面、碰撞、連線與匯出共用同一尺寸規格。
+- 選取具有子節點的節點時會顯示明確的「收合 N／展開 N」控制；狀態依地圖保存在目前裝置，不會同步或建立復原紀錄。
 
 ## v0.18.1 重點
 
