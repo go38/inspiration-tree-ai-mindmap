@@ -32,6 +32,9 @@ test("server-renders the mind map studio", async () => {
   assert.match(html, /AI 思考助手/);
   assert.match(html, /自動擴寫/);
   assert.match(html, /概念解讀/);
+  assert.match(html, /靈感收件匣/);
+  assert.match(html, /AI 幫我想/);
+  assert.match(html, /要種到哪個分支？/);
   assert.match(html, /我的地圖/);
 
   // Initial mind map content is prerendered (center + a first-level branch).
@@ -57,7 +60,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, workspacePage, workspaceClient, schema, suggestRoute] = await Promise.all([
+  const [page, studio, layout, workspacePage, workspaceClient, schema, suggestRoute, inbox] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -65,6 +68,7 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/maps/MapWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/suggest/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/inbox.ts", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin client wrapper around the shared studio.
@@ -106,6 +110,13 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.doesNotMatch(studio, /AI_MODE_LABELS|多節點上下文|過去討論|預覽加入/);
   assert.match(studio, /saveDocumentTitle/);
   assert.match(studio, /href="\/maps"/);
+  assert.match(studio, /data-testid="inspiration-inbox"/);
+  assert.match(studio, /createSeedsFromLines/);
+  assert.match(studio, /createSeedsFromSuggestions/);
+  assert.match(studio, /mode:\s*"diverge"/);
+  assert.match(studio, /plantInboxSeed/);
+  assert.match(inbox, /inspiration-tree:inbox:v1:/);
+  assert.match(inbox, /MAX_INBOX_SEEDS = 80/);
 
   // Drag history precision (P0): starting a drag captures a pre-drag snapshot
   // and defers the checkpoint; a plain node press no longer checkpoints on down.

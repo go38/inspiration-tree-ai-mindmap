@@ -37,6 +37,13 @@ import {
   saveDraft,
 } from "./lib/storage";
 import { type AiExplanation, type AiSuggestion } from "./lib/ai";
+import {
+  createSeedsFromLines,
+  createSeedsFromSuggestions,
+  loadInboxSeeds,
+  saveInboxSeeds,
+  type InspirationSeed,
+} from "./lib/inbox";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -157,6 +164,12 @@ export default function MindMapStudio({
   const [editText, setEditText] = useState("");
   const [editNote, setEditNote] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxDraft, setInboxDraft] = useState("");
+  const [inboxSeeds, setInboxSeeds] = useState<InspirationSeed[]>([]);
+  const [inboxTargetId, setInboxTargetId] = useState(initialSelectedId);
+  const [inboxAiLoading, setInboxAiLoading] = useState(false);
+  const [inboxError, setInboxError] = useState("");
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(() => new Set());
   const [aiMode, setAiMode] = useState<AiAssistantMode>("expand");
   const [generatedSuggestions, setGeneratedSuggestions] = useState<AiSuggestion[] | null>(null);
@@ -182,6 +195,7 @@ export default function MindMapStudio({
   const pendingPointer = useRef<PointerPosition | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
+  const inboxHydrated = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const toastTimer = useRef<number | null>(null);
   const version = useRef(persistence.mode === "cloud" ? persistence.version : 1);
@@ -199,6 +213,8 @@ export default function MindMapStudio({
     documentTitleRef.current = documentTitle;
   }, [documentTitle, nodes, selectedId]);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
+  const inboxScope = persistence.mode === "cloud" ? persistence.mapId : "local";
+  const inboxTarget = nodes.find((node) => node.id === inboxTargetId) ?? selected;
   const availableSuggestionGroups = suggestionGroups[selected.text] ?? suggestionGroups.default;
   const fallbackSuggestions = availableSuggestionGroups[suggestionRound % availableSuggestionGroups.length];
   const aiSuggestions: AiSuggestion[] = generatedForNodeId === selected.id && generatedSuggestions ? generatedSuggestions : fallbackSuggestions.map((item) => ({ ...item, sourceNodeIds: [selected.id] }));
@@ -429,6 +445,16 @@ export default function MindMapStudio({
   }, []);
 
   useEffect(() => {
+    setInboxSeeds(loadInboxSeeds(inboxScope));
+    inboxHydrated.current = true;
+  }, [inboxScope]);
+
+  useEffect(() => {
+    if (!inboxHydrated.current) return;
+    saveInboxSeeds(inboxScope, inboxSeeds);
+  }, [inboxScope, inboxSeeds]);
+
+  useEffect(() => {
     if (persistence.mode !== "cloud") return;
     const protectCurrentDraft = () => {
       if (!needsCloudSync.current) return;
@@ -546,6 +572,86 @@ export default function MindMapStudio({
   function addSiblingNode() {
     const parentId = selected.parent ?? selected.id;
     addNode(parentId);
+  }
+
+  function openInbox() {
+    setInboxTargetId(selected.id);
+    setInboxError("");
+    setInboxOpen(true);
+  }
+
+  function captureInboxSeeds() {
+    const created = createSeedsFromLines(inboxDraft, inboxSeeds);
+    if (!created.length) {
+      setInboxError(inboxDraft.trim() ? "這些想法已在收件匣中，或沒有可辨識的內容。" : "請先輸入一行或多行想法。");
+      return;
+    }
+    setInboxSeeds((items) => [...items, ...created]);
+    setInboxDraft("");
+    setInboxError("");
+    flashToast(`已收進 ${created.length} 顆靈感種子`);
+  }
+
+  async function brainstormInbox() {
+    if (inboxAiLoading) return;
+    setInboxAiLoading(true);
+    setInboxError("");
+    const direction = inboxDraft.trim().slice(0, 620);
+    try {
+      const response = await fetch("/api/suggest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode: "diverge",
+          prompt: direction
+            ? `請延伸以下零碎想法，提出適合先放進靈感收件匣、稍後再分類的不同方向：${direction}`
+            : "請針對目前節點進行開放式腦力激盪，提出適合先放進靈感收件匣、稍後再分類的不同方向。",
+          focusNodeId: selected.id,
+          contextNodeIds: [],
+          nodes,
+        }),
+      });
+      const data = await response.json() as { suggestions?: AiSuggestion[]; error?: string };
+      if (!response.ok || !data.suggestions?.length) {
+        setInboxError(data.error || "AI 暫時沒有產生可用的靈感，請稍後再試。");
+        return;
+      }
+      const created = createSeedsFromSuggestions(data.suggestions, inboxSeeds);
+      if (!created.length) {
+        setInboxError("AI 提供的想法已經在收件匣裡了，可以換個方向再試。");
+        return;
+      }
+      setInboxSeeds((items) => [...items, ...created]);
+      setInboxError("");
+      flashToast(`AI 帶回 ${created.length} 顆新種子`);
+    } catch {
+      setInboxError("網路連線失敗，原有種子沒有被變更。請稍後再試。");
+    } finally {
+      setInboxAiLoading(false);
+    }
+  }
+
+  function plantInboxSeed(seed: InspirationSeed) {
+    const target = nodes.find((node) => node.id === inboxTarget.id) ?? selected;
+    addNode(target.id, seed.title, seed.note || "從靈感收件匣種下的想法");
+    setInboxSeeds((items) => items.filter((item) => item.id !== seed.id));
+    setCollapsedIds((current) => {
+      if (!current.has(target.id)) return current;
+      const next = new Set(current);
+      next.delete(target.id);
+      return next;
+    });
+  }
+
+  function removeInboxSeed(seedId: string) {
+    setInboxSeeds((items) => items.filter((item) => item.id !== seedId));
+    flashToast("種子已從收件匣移除");
+  }
+
+  function clearInbox() {
+    if (!inboxSeeds.length || !window.confirm(`確定要清空 ${inboxSeeds.length} 顆尚未分類的種子嗎？`)) return;
+    setInboxSeeds([]);
+    flashToast("靈感收件匣已清空");
   }
 
   function beginEdit(node: NodeItem) {
@@ -1230,6 +1336,11 @@ export default function MindMapStudio({
             <span aria-hidden="true">−</span>
           </button>
           <span className="tool-divider" aria-hidden="true" />
+          <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣">
+            <span aria-hidden="true">⌑</span>
+            {inboxSeeds.length > 0 && <small className="inbox-badge">{Math.min(inboxSeeds.length, 99)}</small>}
+          </button>
+          <span className="tool-divider" aria-hidden="true" />
           <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!history.length}>
             <span aria-hidden="true">↶</span>
           </button>
@@ -1247,6 +1358,63 @@ export default function MindMapStudio({
             </button>
           </>}
         </nav>
+
+        {inboxOpen && <button className="inbox-backdrop" aria-label="關閉靈感收件匣" onClick={() => setInboxOpen(false)} />}
+        <aside className={`inbox-drawer ${inboxOpen ? "open" : ""}`} aria-hidden={!inboxOpen} inert={!inboxOpen} data-testid="inspiration-inbox">
+          <header className="inbox-header">
+            <div className="inbox-mark" aria-hidden="true">種</div>
+            <div><h2>靈感收件匣</h2><p>先收下，再決定要長在哪個分支</p></div>
+            <button type="button" onClick={() => setInboxOpen(false)} aria-label="關閉靈感收件匣">×</button>
+          </header>
+          <div className="inbox-body">
+            <section className="inbox-composer">
+              <label htmlFor="inbox-draft">把零碎想法倒進來</label>
+              <textarea
+                id="inbox-draft"
+                value={inboxDraft}
+                onChange={(event) => setInboxDraft(event.target.value)}
+                placeholder={"每行一個想法，例如：\n訪談三位使用者\n重新整理首頁文案\n找一個更簡單的名稱"}
+              />
+              <small>可貼上多行筆記；「標題｜補充」會自動拆成標題與說明。</small>
+              <div className="inbox-compose-actions">
+                <button type="button" className="ai" onClick={() => void brainstormInbox()} disabled={inboxAiLoading}>
+                  <span aria-hidden="true">✦</span>{inboxAiLoading ? "AI 發想中…" : "AI 幫我想"}
+                </button>
+                <button type="button" className="primary" onClick={captureInboxSeeds}>收進來</button>
+              </div>
+            </section>
+            {inboxError && <div className="inbox-error" role="alert">{inboxError}</div>}
+            <section className="inbox-queue">
+              <div className="inbox-queue-heading">
+                <div><strong>等待分類</strong><span>{inboxSeeds.length} 顆種子</span></div>
+                {inboxSeeds.length > 0 && <button type="button" onClick={clearInbox}>清空</button>}
+              </div>
+              <label className="inbox-target" htmlFor="inbox-target">
+                <span>要種到哪個分支？</span>
+                <select id="inbox-target" value={inboxTarget.id} onChange={(event) => setInboxTargetId(Number(event.target.value))}>
+                  {nodes.map((node) => <option value={node.id} key={node.id}>{`${"　".repeat(depthOf(nodes, node))}${node.text}`}</option>)}
+                </select>
+              </label>
+              {inboxSeeds.length > 0 ? <div className="seed-list" aria-live="polite">
+                {inboxSeeds.map((seed) => <article className="seed-card" key={seed.id}>
+                  <div className="seed-copy">
+                    <span className={`seed-source ${seed.source}`}>{seed.source === "ai" ? "AI 靈感" : "快速記下"}</span>
+                    <strong>{seed.title}</strong>
+                    {seed.note && <p>{seed.note}</p>}
+                  </div>
+                  <div className="seed-actions">
+                    <button type="button" className="plant" onClick={() => plantInboxSeed(seed)} aria-label={`將${seed.title}種到${inboxTarget.text}分支`}>種到分支 <span aria-hidden="true">→</span></button>
+                    <button type="button" className="remove" onClick={() => removeInboxSeed(seed.id)} aria-label={`移除種子：${seed.title}`}>×</button>
+                  </div>
+                </article>)}
+              </div> : <div className="inbox-empty">
+                <span aria-hidden="true">⌑</span>
+                <strong>這裡還沒有種子</strong>
+                <p>先貼上幾行筆記，或請 AI 從目前節點帶回一些新方向。</p>
+              </div>}
+            </section>
+          </div>
+        </aside>
 
         <div ref={canvasRef} className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${viewMode === "tree" ? "tree-active" : ""} ${panning ? "panning" : ""} ${draggingId !== null ? "dragging-node" : ""}`} onPointerDown={beginCanvasPan} onPointerMove={onPointerMove} onPointerUp={endPointerInteraction} onPointerCancel={endPointerInteraction}>
           <div className="canvas-commandbar">

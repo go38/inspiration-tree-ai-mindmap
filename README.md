@@ -1,9 +1,9 @@
 # 靈感樹｜AI 心智圖工作室
 
-一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供 AI 自動擴寫與概念解讀，協助思路持續前進。
+一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.16.0`
+- 目前產品版本：`v0.17.0`
 - 存取狀態：私人 Beta（僅限擁有者）
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -35,6 +35,7 @@ This starter does not use `wrangler.jsonc`.
 - `app/globals.css`：網站視覺與響應式版面
 - `app/layout.tsx`：網站中繼資料與語言設定
 - `app/lib/mindmap.ts`：心智圖純函式（節點/歷史/匯出邏輯），與 UI 解耦以利單元測試
+- `app/lib/inbox.ts`：靈感種子的解析、去重、版本化本機保存與 AI 建議轉換
 - `app/lib/workspace.ts`：個人地圖所有權、建立、重新命名與封存驗證邏輯
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
@@ -42,6 +43,13 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.17.0 重點
+
+- 新增「靈感收件匣」：可貼上多行筆記或快速輸入零碎想法，每行先形成一顆尚未分類的種子。
+- 支援「標題｜補充」自動拆分、項目符號清理、重複想法過濾，以及每張心智圖獨立的裝置端保存。
+- 種子可選擇任一節點作為目的分支，按下「種到分支」才建立正式節點，並沿用既有復原與自動儲存。
+- 「AI 幫我想」會依目前節點與輸入方向進行開放式腦力激盪；產生的內容先進收件匣，不會直接改動心智圖。
 
 ## v0.16.0 重點
 
