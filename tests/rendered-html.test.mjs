@@ -222,4 +222,11 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /data-testid="ai-context-menu"/);
   assert.match(studio, /runAiAssistantCommand\(command\.id\)/);
   assert.match(studio, /aria-label=\{`對\$\{node\.text\}使用 AI Assistant`\}/);
+  assert.match(studio, /data-testid="ai-map-dialog"/);
+  assert.match(studio, /fetch\("\/api\/generate-map"/);
+  assert.match(studio, /套用會取代目前地圖，但可復原一次/);
+  assert.match(studio, /data-testid="knowledge-import-dialog"/);
+  assert.match(studio, /fetch\("\/api\/knowledge-import"/);
+  assert.match(studio, /PDF／網站／影音知識匯入/);
+  assert.match(studio, /影音逐字稿/);
 });

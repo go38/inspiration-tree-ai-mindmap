@@ -77,6 +77,13 @@ import {
   filterBranchTemplates,
   type TemplateCategory,
 } from "./lib/reuse";
+import {
+  AI_MAP_DETAIL_OPTIONS,
+  materializeAiMapDraft,
+  type AiMapDetail,
+  type AiMapDraft,
+} from "./lib/aiMap";
+import { type KnowledgeSourceType } from "./lib/knowledgeImport";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -138,7 +145,7 @@ type ServerMap = {
 type SyncState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 type ViewMode = "canvas" | "tree" | "outline";
 type AiAssistantMode = "expand" | "explain";
-type UtilityModal = "templates" | "import" | "preferences" | null;
+type UtilityModal = "templates" | "import" | "preferences" | "generate-map" | "knowledge-import" | null;
 type PointerPosition = { clientX: number; clientY: number };
 type AiContextMenu = { x: number; y: number; nodeId: number };
 type PinchGesture = {
@@ -219,6 +226,19 @@ export default function MindMapStudio({
   const [templateQuery, setTemplateQuery] = useState("");
   const [templateCategory, setTemplateCategory] = useState<"全部" | TemplateCategory>("全部");
   const [previewTemplateId, setPreviewTemplateId] = useState(BRANCH_TEMPLATES.find((template) => template.featured)?.id ?? BRANCH_TEMPLATES[0]?.id ?? "");
+  const [aiMapPrompt, setAiMapPrompt] = useState("");
+  const [aiMapDetail, setAiMapDetail] = useState<AiMapDetail>("standard");
+  const [aiMapDraft, setAiMapDraft] = useState<AiMapDraft | null>(null);
+  const [aiMapLoading, setAiMapLoading] = useState(false);
+  const [aiMapError, setAiMapError] = useState("");
+  const [knowledgeSourceType, setKnowledgeSourceType] = useState<KnowledgeSourceType>("pdf");
+  const [knowledgeUrl, setKnowledgeUrl] = useState("");
+  const [knowledgeContent, setKnowledgeContent] = useState("");
+  const [knowledgeFilename, setKnowledgeFilename] = useState("");
+  const [knowledgeFileData, setKnowledgeFileData] = useState("");
+  const [knowledgeDraft, setKnowledgeDraft] = useState<AiMapDraft | null>(null);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [knowledgeError, setKnowledgeError] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [editNote, setEditNote] = useState("");
@@ -332,6 +352,14 @@ export default function MindMapStudio({
   const previewTemplate = BRANCH_TEMPLATES.find((template) => template.id === previewTemplateId)
     ?? filteredTemplates[0]
     ?? BRANCH_TEMPLATES[0];
+  const generatedMapNodes = useMemo(
+    () => aiMapDraft ? materializeAiMapDraft(aiMapDraft) : [],
+    [aiMapDraft],
+  );
+  const knowledgeMapNodes = useMemo(
+    () => knowledgeDraft ? materializeAiMapDraft(knowledgeDraft) : [],
+    [knowledgeDraft],
+  );
 
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const childrenByParent = useMemo(() => buildChildrenByParent(nodes), [nodes]);
@@ -747,6 +775,122 @@ export default function MindMapStudio({
     });
     setUtilityModal(null);
     flashToast(`已在「${selected.text}」套用${template.title}範本，可復原`, 2600);
+  }
+
+  function openAiMapGenerator() {
+    setAiMapError("");
+    setUtilityModal("generate-map");
+  }
+
+  async function generateAiMap() {
+    if (aiMapLoading || aiMapPrompt.trim().length < 3) return;
+    setAiMapLoading(true);
+    setAiMapError("");
+    setAiMapDraft(null);
+    try {
+      const response = await fetch("/api/generate-map", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: aiMapPrompt.trim(), detail: aiMapDetail }),
+      });
+      const data = await response.json() as { draft?: AiMapDraft; error?: string };
+      if (!response.ok || !data.draft) {
+        setAiMapError(data.error || "AI 暫時無法產生心智圖，請稍後再試。");
+        return;
+      }
+      setAiMapDraft(data.draft);
+      flashToast(`AI 已建立 ${data.draft.nodes.length} 個節點的草稿`);
+    } catch {
+      setAiMapError("網路連線失敗，目前地圖沒有被變更。");
+    } finally {
+      setAiMapLoading(false);
+    }
+  }
+
+  function applyGeneratedMap() {
+    if (!aiMapDraft || !generatedMapNodes.length) return;
+    checkpoint();
+    const root = generatedMapNodes.find((node) => node.parent === null) ?? generatedMapNodes[0];
+    setNodes(generatedMapNodes);
+    setSelectedId(root.id);
+    setDocumentTitle(aiMapDraft.title);
+    setTreeOffsets({});
+    setCollapsedIds(new Set());
+    setUtilityModal(null);
+    flashToast(`已建立「${aiMapDraft.title}」，可復原`, 2600);
+  }
+
+  function openKnowledgeImport() {
+    setKnowledgeError("");
+    setUtilityModal("knowledge-import");
+  }
+
+  function readKnowledgeFile(file: File | undefined) {
+    if (!file) return;
+    setKnowledgeError("");
+    setKnowledgeDraft(null);
+    if (knowledgeSourceType === "pdf") {
+      if (file.type !== "application/pdf" || file.size > 8_000_000) {
+        setKnowledgeError("請選擇 8MB 以下的 PDF 文件。");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setKnowledgeFilename(file.name);
+        setKnowledgeFileData(typeof reader.result === "string" ? reader.result : "");
+      };
+      reader.onerror = () => setKnowledgeError("PDF 讀取失敗，請重新選擇檔案。");
+      reader.readAsDataURL(file);
+      return;
+    }
+    void file.text().then((text) => {
+      setKnowledgeFilename(file.name);
+      setKnowledgeContent(text.slice(0, 80_000));
+    });
+  }
+
+  async function generateKnowledgeMap() {
+    if (knowledgeLoading) return;
+    setKnowledgeLoading(true);
+    setKnowledgeError("");
+    setKnowledgeDraft(null);
+    try {
+      const response = await fetch("/api/knowledge-import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sourceType: knowledgeSourceType,
+          url: knowledgeUrl.trim(),
+          content: knowledgeContent.trim(),
+          filename: knowledgeFilename,
+          fileData: knowledgeFileData,
+        }),
+      });
+      const data = await response.json() as { draft?: AiMapDraft; error?: string };
+      if (!response.ok || !data.draft) {
+        setKnowledgeError(data.error || "知識來源暫時無法整理。");
+        return;
+      }
+      setKnowledgeDraft(data.draft);
+      flashToast(`已從知識來源整理 ${data.draft.nodes.length} 個節點`);
+    } catch {
+      setKnowledgeError("網路連線失敗，目前地圖沒有被變更。");
+    } finally {
+      setKnowledgeLoading(false);
+    }
+  }
+
+  function applyKnowledgeMap() {
+    if (!knowledgeDraft || !knowledgeMapNodes.length) return;
+    checkpoint();
+    const root = knowledgeMapNodes.find((node) => node.parent === null) ?? knowledgeMapNodes[0];
+    setNodes(knowledgeMapNodes);
+    setSelectedId(root.id);
+    setDocumentTitle(knowledgeDraft.title);
+    setTreeOffsets({});
+    setCollapsedIds(new Set());
+    setUtilityModal(null);
+    flashToast(`已從知識來源建立「${knowledgeDraft.title}」，可復原`, 2800);
   }
 
   function previewImport(source = importSource, format = importFormat) {
@@ -1840,6 +1984,12 @@ export default function MindMapStudio({
           <button className="tool" onClick={() => { setImportPreview(null); setUtilityModal("import"); }} aria-label="匯入 JSON 或 Markdown" data-tooltip="匯入內容">
             <span aria-hidden="true">⇩</span>
           </button>
+          <button className="tool ai-map-tool" onClick={openAiMapGenerator} aria-label="使用 AI 自動產生心智圖" data-tooltip="AI 自動產圖">
+            <span aria-hidden="true">✣</span>
+          </button>
+          <button className="tool knowledge-tool" onClick={openKnowledgeImport} aria-label="匯入 PDF、網站或影音逐字稿" data-tooltip="知識匯入">
+            <span aria-hidden="true">◫</span>
+          </button>
           <span className="tool-divider" aria-hidden="true" />
           <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣">
             <span aria-hidden="true">⌑</span>
@@ -2176,6 +2326,73 @@ export default function MindMapStudio({
               <div className="preview-tags">{previewTemplate.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
               <button type="button" className="primary marketplace-apply" onClick={() => insertTemplate(previewTemplate.id)}>套用到「{selected.text}」</button>
             </aside>}
+          </div>
+        </section>
+      </div>}
+      {utilityModal === "generate-map" && <div className="modal-backdrop" onMouseDown={() => !aiMapLoading && setUtilityModal(null)}>
+        <section className="utility-modal ai-map-modal" role="dialog" aria-modal="true" aria-labelledby="ai-map-title" data-testid="ai-map-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <header className="ai-map-modal-header">
+            <div><span className="modal-kicker">AI MAP GENERATOR</span><h2 id="ai-map-title">AI 自動產圖</h2><p>描述你想規劃或理解的主題，先預覽完整結構，再決定是否建立。</p></div>
+            <button type="button" onClick={() => setUtilityModal(null)} aria-label="關閉 AI 自動產圖" disabled={aiMapLoading}>×</button>
+          </header>
+          <div className="ai-map-workspace">
+            <section className="ai-map-form">
+              <label htmlFor="ai-map-prompt"><span>你想建立什麼？</span><textarea id="ai-map-prompt" value={aiMapPrompt} onChange={(event) => { setAiMapPrompt(event.target.value); setAiMapError(""); }} placeholder={"例如：我要設計一門 MikroTik VLAN 實作課程，包含觀念、Bridge、DHCP、Firewall、Lab 與評量"} maxLength={1200} autoFocus /></label>
+              <fieldset><legend>詳細程度</legend><div className="ai-map-detail-options">
+                {(Object.entries(AI_MAP_DETAIL_OPTIONS) as [AiMapDetail, (typeof AI_MAP_DETAIL_OPTIONS)[AiMapDetail]][]).map(([id, option]) => <label key={id} className={aiMapDetail === id ? "selected" : ""}><input type="radio" name="ai-map-detail" value={id} checked={aiMapDetail === id} onChange={() => setAiMapDetail(id)} /><strong>{option.label}</strong><span>{option.description}</span></label>)}
+              </div></fieldset>
+              <button type="button" className="generate-map-button" onClick={() => void generateAiMap()} disabled={aiMapLoading || aiMapPrompt.trim().length < 3}><span aria-hidden="true">✦</span>{aiMapLoading ? "AI 正在組織結構…" : aiMapDraft ? "重新產生草稿" : "產生心智圖草稿"}</button>
+              <small>AI 可能犯錯；套用前請檢查節點結構與內容。</small>
+              {aiMapError && <div className="ai-map-error" role="alert">{aiMapError}</div>}
+            </section>
+            <section className="ai-map-preview" aria-live="polite">
+              {aiMapDraft ? <>
+                <header><div><span>草稿預覽</span><strong>{aiMapDraft.title}</strong></div><small>{aiMapDraft.nodes.length} 個節點</small></header>
+                <p>{aiMapDraft.summary}</p>
+                <div className="generated-outline">
+                  {generatedMapNodes.map((node) => <article key={node.id} style={{ paddingLeft: `${depthOf(generatedMapNodes, node) * 18}px` }}><span aria-hidden="true">{node.parent === null ? "●" : "└"}</span><div><strong>{node.text}</strong><small>{node.note}</small></div></article>)}
+                </div>
+                <footer><span>套用會取代目前地圖，但可復原一次。</span><button type="button" className="primary" onClick={applyGeneratedMap}>建立這張心智圖</button></footer>
+              </> : <div className="ai-map-empty"><span aria-hidden="true">✣</span><strong>{aiMapLoading ? "正在長出心智圖…" : "你的心智圖草稿會出現在這裡"}</strong><p>{aiMapLoading ? "AI 正在安排中心主題、主要分支與細節。" : "輸入明確的主題、對象與期待成果，通常會得到更好的結構。"}</p></div>}
+            </section>
+          </div>
+        </section>
+      </div>}
+      {utilityModal === "knowledge-import" && <div className="modal-backdrop" onMouseDown={() => !knowledgeLoading && setUtilityModal(null)}>
+        <section className="utility-modal ai-map-modal knowledge-modal" role="dialog" aria-modal="true" aria-labelledby="knowledge-import-title" data-testid="knowledge-import-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <header className="ai-map-modal-header">
+            <div><span className="modal-kicker">KNOWLEDGE IMPORT</span><h2 id="knowledge-import-title">PDF／網站／影音知識匯入</h2><p>讓 AI 從來源擷取重點，先預覽心智圖草稿，確認後才套用。</p></div>
+            <button type="button" onClick={() => setUtilityModal(null)} aria-label="關閉知識匯入" disabled={knowledgeLoading}>×</button>
+          </header>
+          <div className="ai-map-workspace knowledge-workspace">
+            <section className="ai-map-form knowledge-form">
+              <div className="knowledge-source-tabs" role="tablist" aria-label="知識來源">
+                {([["pdf", "PDF"], ["website", "網站"], ["transcript", "影音逐字稿"]] as [KnowledgeSourceType, string][]).map(([type, label]) => <button key={type} type="button" role="tab" aria-selected={knowledgeSourceType === type} className={knowledgeSourceType === type ? "active" : ""} onClick={() => { setKnowledgeSourceType(type); setKnowledgeDraft(null); setKnowledgeError(""); }}>{label}</button>)}
+              </div>
+              {knowledgeSourceType === "pdf" && <>
+                <label className="knowledge-file-picker"><span>選擇 PDF 文件</span><input type="file" accept=".pdf,application/pdf" onChange={(event) => readKnowledgeFile(event.target.files?.[0])} /></label>
+                <div className={`knowledge-source-status ${knowledgeFileData ? "ready" : ""}`}><strong>{knowledgeFileData ? knowledgeFilename : "尚未選擇文件"}</strong><span>上限 8MB；文件會傳送至 AI 服務進行整理。</span></div>
+              </>}
+              {knowledgeSourceType === "website" && <label className="knowledge-field"><span>公開網站網址</span><input type="url" inputMode="url" value={knowledgeUrl} onChange={(event) => { setKnowledgeUrl(event.target.value); setKnowledgeDraft(null); setKnowledgeError(""); }} placeholder="https://example.com/article" autoFocus /><small>僅支援公開 HTTPS 網頁；需登入或以 JavaScript 動態載入的內容可能無法讀取。</small></label>}
+              {knowledgeSourceType === "transcript" && <>
+                <label className="knowledge-field"><span>影音網址（選填，作為來源標示）</span><input type="url" inputMode="url" value={knowledgeUrl} onChange={(event) => setKnowledgeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" /></label>
+                <label className="knowledge-file-picker compact"><span>上傳字幕或逐字稿</span><input type="file" accept=".txt,.md,.srt,.vtt,text/plain,text/markdown,text/vtt" onChange={(event) => readKnowledgeFile(event.target.files?.[0])} /></label>
+                <label className="knowledge-field"><span>或貼上逐字稿</span><textarea value={knowledgeContent} onChange={(event) => { setKnowledgeContent(event.target.value.slice(0, 80_000)); setKnowledgeDraft(null); setKnowledgeError(""); }} placeholder="貼上影片或 Podcast 的字幕、逐字稿…" maxLength={80_000} /></label>
+              </>}
+              <button type="button" className="generate-map-button" onClick={() => void generateKnowledgeMap()} disabled={knowledgeLoading || (knowledgeSourceType === "pdf" ? !knowledgeFileData : knowledgeSourceType === "website" ? !knowledgeUrl.trim().startsWith("https://") : knowledgeContent.trim().length < 20)}><span aria-hidden="true">✦</span>{knowledgeLoading ? "AI 正在閱讀來源…" : knowledgeDraft ? "重新整理草稿" : "整理成心智圖草稿"}</button>
+              {knowledgeSourceType === "transcript" && <small>目前不會繞過平台登入或擷取私人字幕；請提供你有權使用的逐字稿。</small>}
+              {knowledgeError && <div className="ai-map-error" role="alert">{knowledgeError}</div>}
+            </section>
+            <section className="ai-map-preview" aria-live="polite">
+              {knowledgeDraft ? <>
+                <header><div><span>知識草稿預覽</span><strong>{knowledgeDraft.title}</strong></div><small>{knowledgeDraft.nodes.length} 個節點</small></header>
+                <p>{knowledgeDraft.summary}</p>
+                <div className="generated-outline">
+                  {knowledgeMapNodes.map((node) => <article key={node.id} style={{ paddingLeft: `${depthOf(knowledgeMapNodes, node) * 18}px` }}><span aria-hidden="true">{node.parent === null ? "●" : "└"}</span><div><strong>{node.text}</strong><small>{node.note}</small></div></article>)}
+                </div>
+                <footer><span>套用會取代目前地圖，但可復原一次。</span><button type="button" className="primary" onClick={applyKnowledgeMap}>建立這張心智圖</button></footer>
+              </> : <div className="ai-map-empty"><span aria-hidden="true">◫</span><strong>{knowledgeLoading ? "正在閱讀與整理…" : "來源摘要與心智圖會出現在這裡"}</strong><p>{knowledgeLoading ? "AI 正在辨識主題、論點、步驟與限制。" : "選擇 PDF、貼上公開網址，或提供影音逐字稿開始整理。"}</p></div>}
+            </section>
           </div>
         </section>
       </div>}
