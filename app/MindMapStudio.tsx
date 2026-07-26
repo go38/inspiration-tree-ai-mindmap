@@ -55,6 +55,15 @@ import {
   type InspirationSeed,
 } from "./lib/inbox";
 import { loadMapViewState, saveMapViewState } from "./lib/viewState";
+import { parseMapImport, type ImportFormat, type ImportResult } from "./lib/importMap";
+import {
+  DEFAULT_PREFERENCES,
+  loadPreferences,
+  resetPreferences,
+  savePreferences,
+  type UserPreferences,
+} from "./lib/preferences";
+import { BRANCH_TEMPLATES, applyBranchTemplate, duplicateBranch } from "./lib/reuse";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -116,6 +125,7 @@ type ServerMap = {
 type SyncState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 type ViewMode = "canvas" | "tree" | "outline";
 type AiAssistantMode = "expand" | "explain";
+type UtilityModal = "templates" | "import" | "preferences" | null;
 type PointerPosition = { clientX: number; clientY: number };
 type PinchGesture = {
   lastDistance: number;
@@ -186,6 +196,12 @@ export default function MindMapStudio({
   const [titleDraft, setTitleDraft] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("canvas");
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
+  const [utilityModal, setUtilityModal] = useState<UtilityModal>(null);
+  const [importSource, setImportSource] = useState("");
+  const [importFormat, setImportFormat] = useState<ImportFormat>("auto");
+  const [importPreview, setImportPreview] = useState<ImportResult | null>(null);
+  const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
+  const [preferencesDraft, setPreferencesDraft] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [editNote, setEditNote] = useState("");
@@ -255,6 +271,15 @@ export default function MindMapStudio({
     stageOffsetRef.current = stageOffset;
     stagePanRef.current = stagePan;
   }, [stageOffset, stagePan, zoom]);
+  useEffect(() => {
+    const saved = loadPreferences();
+    setPreferences(saved);
+    setPreferencesDraft(saved);
+    setViewMode(saved.defaultView);
+    setMobileAiOpen(saved.aiPanelOpen);
+    setZoom(saved.zoom);
+    zoomRef.current = saved.zoom;
+  }, []);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const inboxScope = persistence.mode === "cloud" ? persistence.mapId : "local";
   const viewStateScope = inboxScope;
@@ -652,6 +677,96 @@ export default function MindMapStudio({
   function addSiblingNode() {
     const parentId = selected.parent ?? selected.id;
     addNode(parentId);
+  }
+
+  function duplicateSelectedBranch() {
+    const result = duplicateBranch(nodes, selected.id);
+    if (!result) {
+      flashToast("中心節點不能複製，請先選擇一個分支");
+      return;
+    }
+    checkpoint();
+    setNodes(result.nodes);
+    setSelectedId(result.rootId);
+    flashToast(`已複製「${selected.text}」及完整子樹，可復原`, 2400);
+  }
+
+  function insertTemplate(templateId: string) {
+    const template = BRANCH_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+    const result = applyBranchTemplate(nodes, selected.id, template);
+    if (!result) return;
+    checkpoint();
+    setNodes(result.nodes);
+    setSelectedId(result.rootId);
+    setCollapsedIds((current) => {
+      const next = new Set(current);
+      next.delete(selected.id);
+      return next;
+    });
+    setUtilityModal(null);
+    flashToast(`已在「${selected.text}」套用${template.title}範本，可復原`, 2600);
+  }
+
+  function previewImport(source = importSource, format = importFormat) {
+    const result = parseMapImport(source, format);
+    setImportPreview(result);
+    return result;
+  }
+
+  async function readImportFile(file: File | undefined) {
+    if (!file) return;
+    const source = await file.text();
+    const format: ImportFormat = file.name.toLowerCase().endsWith(".json") ? "json" : file.name.toLowerCase().endsWith(".md") || file.name.toLowerCase().endsWith(".markdown") ? "markdown" : "auto";
+    setImportSource(source);
+    setImportFormat(format);
+    previewImport(source, format);
+  }
+
+  function applyImport() {
+    const result = importPreview?.ok ? importPreview : previewImport();
+    if (!result.ok) return;
+    checkpoint();
+    setNodes(result.nodes);
+    setSelectedId(result.nodes.find((node) => node.parent === null)?.id ?? result.nodes[0].id);
+    setDocumentTitle(result.title);
+    setCollapsedIds(new Set());
+    setTreeOffsets({});
+    setImportSource("");
+    setImportPreview(null);
+    setUtilityModal(null);
+    flashToast(`已匯入 ${result.nodes.length} 個節點，可復原`, 2400);
+  }
+
+  function openPreferences() {
+    setPreferencesDraft(preferences);
+    setUtilityModal("preferences");
+  }
+
+  function applyPreferences(next = preferencesDraft) {
+    if (!savePreferences(next)) {
+      flashToast("偏好無法儲存，請檢查瀏覽器儲存空間");
+      return;
+    }
+    setPreferences(next);
+    setPreferencesDraft(next);
+    setViewMode(next.defaultView);
+    setMobileAiOpen(next.aiPanelOpen);
+    setZoom(next.zoom);
+    zoomRef.current = next.zoom;
+    setUtilityModal(null);
+    flashToast("使用者偏好已儲存");
+  }
+
+  function restoreDefaultPreferences() {
+    const defaults = resetPreferences();
+    setPreferences(defaults);
+    setPreferencesDraft(defaults);
+    setViewMode(defaults.defaultView);
+    setMobileAiOpen(defaults.aiPanelOpen);
+    setZoom(defaults.zoom);
+    zoomRef.current = defaults.zoom;
+    flashToast("偏好已重設");
   }
 
   function openInbox() {
@@ -1410,6 +1525,16 @@ export default function MindMapStudio({
     flashToast("Markdown 已下載");
   }
 
+  function exportJson() {
+    downloadFile(
+      [JSON.stringify({ version: 1, title: documentTitle, nodes }, null, 2)],
+      "application/json;charset=utf-8",
+      "json",
+    );
+    setExportOpen(false);
+    flashToast("JSON 已下載");
+  }
+
   function makePdfFromJpeg(jpeg: Uint8Array, imageWidth: number, imageHeight: number) {
     const encoder = new TextEncoder();
     const chunks: Uint8Array[] = [];
@@ -1575,7 +1700,7 @@ export default function MindMapStudio({
     : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
 
   return (
-    <main className={`app-shell ${conflict || (isCloud && (sync === "offline" || sync === "error")) ? "has-banner" : ""}`}>
+    <main className={`app-shell ${preferences.reducedMotion ? "reduce-motion" : ""} ${conflict || (isCloud && (sync === "offline" || sync === "error")) ? "has-banner" : ""}`}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
         <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} aria-label={`修改標題：${documentTitle}`}>{documentTitle}<span aria-hidden="true">✎</span></button>} <span className="saved">{statusLabel}</span></div>
@@ -1584,6 +1709,7 @@ export default function MindMapStudio({
           <div className="export-wrap">
             <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>
             {exportOpen && <div className="export-menu" role="menu">
+              <button role="menuitem" onClick={exportJson}><span className="file-icon">J↓</span><span><strong>JSON</strong><small>可再次匯入的完整地圖</small></span></button>
               <button role="menuitem" onClick={exportMarkdown}><span className="file-icon">M↓</span><span><strong>Markdown</strong><small>保留節點階層與說明</small></span></button>
               <button role="menuitem" onClick={exportPdf}><span className="file-icon pdf">P↓</span><span><strong>PDF 文件</strong><small>輸出完整心智圖畫布</small></span></button>
               <button role="menuitem" onClick={exportPng}><span className="file-icon png">PNG</span><span><strong>PNG 圖形檔</strong><small>高解析度完整心智圖</small></span></button>
@@ -1627,6 +1753,15 @@ export default function MindMapStudio({
           <button className="tool danger" onClick={removeSelectedNode} aria-label="移除目前節點" data-tooltip="移除節點" disabled={selected.parent === null}>
             <span aria-hidden="true">−</span>
           </button>
+          <button className="tool" onClick={duplicateSelectedBranch} aria-label="複製目前分支及完整子樹" data-tooltip="複製分支" disabled={selected.parent === null}>
+            <span aria-hidden="true">⧉</span>
+          </button>
+          <button className="tool" onClick={() => setUtilityModal("templates")} aria-label="開啟分支範本" data-tooltip="分支範本">
+            <span aria-hidden="true">▦</span>
+          </button>
+          <button className="tool" onClick={() => { setImportPreview(null); setUtilityModal("import"); }} aria-label="匯入 JSON 或 Markdown" data-tooltip="匯入內容">
+            <span aria-hidden="true">⇩</span>
+          </button>
           <span className="tool-divider" aria-hidden="true" />
           <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣">
             <span aria-hidden="true">⌑</span>
@@ -1642,6 +1777,9 @@ export default function MindMapStudio({
           <span className="tool-divider" aria-hidden="true" />
           <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => selectViewMode(viewMode === "outline" ? "canvas" : "outline")} aria-label={viewMode === "outline" ? "切換至心智圖模式" : "切換至大綱模式"} data-tooltip={viewMode === "outline" ? "切換至畫布" : "切換至大綱"}>
             <span aria-hidden="true">≡</span>
+          </button>
+          <button className="tool" onClick={openPreferences} aria-label="開啟使用者偏好" data-tooltip="使用者偏好">
+            <span aria-hidden="true">⚙</span>
           </button>
           {!isCloud && <>
             <span className="tool-divider" aria-hidden="true" />
@@ -1891,6 +2029,60 @@ export default function MindMapStudio({
           <footer>
             <button type="button" onClick={closeTransplant}>取消</button>
             <button type="button" className="primary" onClick={applyTransplant} disabled={transplantParentId === transplantingNode.parent} data-testid="confirm-transplant">移植並整理</button>
+          </footer>
+        </section>
+      </div>}
+      {utilityModal === "templates" && <div className="modal-backdrop" onMouseDown={() => setUtilityModal(null)}>
+        <section className="utility-modal" role="dialog" aria-modal="true" aria-labelledby="template-title" data-testid="template-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <span className="modal-kicker">分支範本</span>
+          <h2 id="template-title">在「{selected.text}」下建立結構</h2>
+          <p>範本會成為目前節點的子分支，整次套用可一次復原。</p>
+          <div className="template-grid">
+            {BRANCH_TEMPLATES.map((template) => <article key={template.id}>
+              <strong>{template.title}</strong>
+              <p>{template.description}</p>
+              <small>{template.nodes.length} 個節點</small>
+              <button type="button" onClick={() => insertTemplate(template.id)}>使用此範本</button>
+            </article>)}
+          </div>
+          <footer><button type="button" onClick={() => setUtilityModal(null)}>取消</button></footer>
+        </section>
+      </div>}
+      {utilityModal === "import" && <div className="modal-backdrop" onMouseDown={() => setUtilityModal(null)}>
+        <section className="utility-modal import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title" data-testid="import-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <span className="modal-kicker">匯入內容</span>
+          <h2 id="import-title">JSON／Markdown 匯入</h2>
+          <p>先預覽格式、標題與節點數，確認後才會取代目前地圖；完成後仍可復原。</p>
+          <div className="import-controls">
+            <label><span>格式</span><select value={importFormat} onChange={(event) => { const format = event.target.value as ImportFormat; setImportFormat(format); setImportPreview(null); }}><option value="auto">自動判斷</option><option value="json">JSON</option><option value="markdown">Markdown</option></select></label>
+            <label className="file-picker"><span>或選擇檔案</span><input type="file" accept=".json,.md,.markdown,application/json,text/markdown" onChange={(event) => void readImportFile(event.target.files?.[0])} /></label>
+          </div>
+          <label className="import-source"><span>貼上內容</span><textarea value={importSource} onChange={(event) => { setImportSource(event.target.value); setImportPreview(null); }} placeholder={'# 中心主題\n## 第一個分支\n分支說明'} /></label>
+          {importPreview && <div className={`import-preview ${importPreview.ok ? "valid" : "invalid"}`} role="status">
+            {importPreview.ok
+              ? <><strong>可匯入：{importPreview.title}</strong><span>{importPreview.format.toUpperCase()} · {importPreview.nodes.length} 個節點</span></>
+              : <><strong>無法匯入</strong><span>{importPreview.line ? `第 ${importPreview.line} 行：` : importPreview.node ? `第 ${importPreview.node} 個節點：` : ""}{importPreview.message}</span></>}
+          </div>}
+          <footer>
+            <button type="button" onClick={() => setUtilityModal(null)}>取消</button>
+            <button type="button" onClick={() => previewImport()}>產生預覽</button>
+            <button type="button" className="primary" onClick={applyImport} disabled={!importPreview?.ok}>匯入並取代</button>
+          </footer>
+        </section>
+      </div>}
+      {utilityModal === "preferences" && <div className="modal-backdrop" onMouseDown={() => setUtilityModal(null)}>
+        <section className="utility-modal preferences-modal" role="dialog" aria-modal="true" aria-labelledby="preferences-title" data-testid="preferences-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <span className="modal-kicker">使用者偏好</span>
+          <h2 id="preferences-title">每次開啟時的預設狀態</h2>
+          <p>設定只保存在這台裝置，不會改變其他人的共享檢視。</p>
+          <label><span>預設檢視</span><select value={preferencesDraft.defaultView} onChange={(event) => setPreferencesDraft((current) => ({ ...current, defaultView: event.target.value as UserPreferences["defaultView"] }))}><option value="canvas">心智圖</option><option value="tree">樹狀</option><option value="outline">大綱</option></select></label>
+          <label><span>預設縮放</span><div className="preference-range"><input type="range" min="10" max="200" step="10" value={preferencesDraft.zoom} onChange={(event) => setPreferencesDraft((current) => ({ ...current, zoom: Number(event.target.value) }))} /><strong>{preferencesDraft.zoom}%</strong></div></label>
+          <label className="preference-toggle"><input type="checkbox" checked={preferencesDraft.aiPanelOpen} onChange={(event) => setPreferencesDraft((current) => ({ ...current, aiPanelOpen: event.target.checked }))} /><span>預設展開 AI 面板</span></label>
+          <label className="preference-toggle"><input type="checkbox" checked={preferencesDraft.reducedMotion} onChange={(event) => setPreferencesDraft((current) => ({ ...current, reducedMotion: event.target.checked }))} /><span>減少介面動態效果</span></label>
+          <footer>
+            <button type="button" onClick={restoreDefaultPreferences}>重設</button>
+            <button type="button" onClick={() => setUtilityModal(null)}>取消</button>
+            <button type="button" className="primary" onClick={() => applyPreferences()}>儲存偏好</button>
           </footer>
         </section>
       </div>}

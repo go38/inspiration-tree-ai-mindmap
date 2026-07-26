@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.22.0`
+- 目前產品版本：`v0.23.0`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -38,6 +38,9 @@ This starter does not use `wrangler.jsonc`.
 - `app/lib/mindmap.ts`：心智圖純函式（節點/歷史/匯出邏輯），與 UI 解耦以利單元測試
 - `app/lib/inbox.ts`：靈感種子的解析、去重、版本化本機保存與 AI 建議轉換
 - `app/lib/viewState.ts`：依地圖隔離的版本化本機檢視狀態（目前保存分支收合）
+- `app/lib/reuse.ts`：完整子樹複製與內建分支範本
+- `app/lib/importMap.ts`：JSON／Markdown 匯入、預覽與錯誤定位
+- `app/lib/preferences.ts`：版本化裝置端使用者偏好
 - `app/lib/workspace.ts`：個人地圖所有權、建立、重新命名與封存驗證邏輯
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
@@ -45,6 +48,12 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.23.0 重點
+
+- 可複製目前節點與完整子樹，或套用 SMART 目標、決策分析、每週回顧範本；所有操作都可一次復原。
+- 支援 JSON／Markdown 檔案與貼上匯入，確認前顯示格式、標題、節點數，並將錯誤定位到行或節點。
+- 裝置端保存預設檢視、AI 面板、縮放與減少動態偏好，並提供一鍵重設；JSON 匯出可完整往返。
 
 ## v0.22.0 重點
 
