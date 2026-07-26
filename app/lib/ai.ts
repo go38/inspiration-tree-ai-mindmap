@@ -1,6 +1,31 @@
 import { parseNodes, type NodeItem } from "./mindmap.ts";
 
 export type AiMode = "expand" | "explain" | "diverge" | "breakdown" | "challenge";
+export type AiAssistantCommand = "expand" | "risks" | "swot" | "okr" | "brainstorm" | "simplify" | "translate" | "summary";
+
+export type AiAssistantCommandDefinition = {
+  id: AiAssistantCommand;
+  label: string;
+  icon: string;
+  mode: AiMode;
+  prompt: string;
+  result: "suggestions" | "explanation";
+};
+
+export const AI_ASSISTANT_COMMANDS: AiAssistantCommandDefinition[] = [
+  { id: "expand", label: "展開想法", icon: "✦", mode: "expand", prompt: "延伸成互補、可直接加入心智圖的具體子節點。", result: "suggestions" },
+  { id: "risks", label: "找風險", icon: "△", mode: "challenge", prompt: "找出關鍵風險、隱藏假設、早期警訊與可行的緩解方式。", result: "suggestions" },
+  { id: "swot", label: "SWOT", icon: "田", mode: "expand", prompt: "以優勢、劣勢、機會、威脅四個面向完成 SWOT；標題需清楚標示所屬面向。", result: "suggestions" },
+  { id: "okr", label: "OKR", icon: "◎", mode: "breakdown", prompt: "把內容整理成一個清楚目標與 3 至 5 個可衡量關鍵結果；標題需標示 Objective 或 KR。", result: "suggestions" },
+  { id: "brainstorm", label: "Brainstorm", icon: "☄", mode: "diverge", prompt: "進行開放式腦力激盪，提出跨角度、有區別且尚未出現的新方向。", result: "suggestions" },
+  { id: "simplify", label: "簡化內容", icon: "≋", mode: "explain", prompt: "用初學者能懂的一句話簡化內容，保留核心意思並移除術語；核心重點也要使用短句。", result: "explanation" },
+  { id: "translate", label: "翻譯成英文", icon: "文", mode: "explain", prompt: "將目前節點標題與說明準確翻譯成自然英文；definition 放完整譯文，核心重點說明關鍵用詞，其他文字仍以繁體中文呈現。", result: "explanation" },
+  { id: "summary", label: "摘要", icon: "Σ", mode: "explain", prompt: "綜合目前節點、上層脈絡與直接子節點，先給一段精簡摘要，再列出最重要的核心重點。", result: "explanation" },
+];
+
+export function getAiAssistantCommand(id: string): AiAssistantCommandDefinition | null {
+  return AI_ASSISTANT_COMMANDS.find((command) => command.id === id) ?? null;
+}
 
 export type AiSuggestion = {
   title: string;

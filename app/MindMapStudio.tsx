@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import {
   applyTreeNodeOffsets,
@@ -46,7 +46,13 @@ import {
   saveDocumentTitle,
   saveDraft,
 } from "./lib/storage";
-import { type AiExplanation, type AiSuggestion } from "./lib/ai";
+import {
+  AI_ASSISTANT_COMMANDS,
+  type AiAssistantCommand,
+  type AiExplanation,
+  type AiMode,
+  type AiSuggestion,
+} from "./lib/ai";
 import {
   createSeedsFromLines,
   createSeedsFromSuggestions,
@@ -63,7 +69,14 @@ import {
   savePreferences,
   type UserPreferences,
 } from "./lib/preferences";
-import { BRANCH_TEMPLATES, applyBranchTemplate, duplicateBranch } from "./lib/reuse";
+import {
+  BRANCH_TEMPLATES,
+  TEMPLATE_CATEGORIES,
+  applyBranchTemplate,
+  duplicateBranch,
+  filterBranchTemplates,
+  type TemplateCategory,
+} from "./lib/reuse";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -127,6 +140,7 @@ type ViewMode = "canvas" | "tree" | "outline";
 type AiAssistantMode = "expand" | "explain";
 type UtilityModal = "templates" | "import" | "preferences" | null;
 type PointerPosition = { clientX: number; clientY: number };
+type AiContextMenu = { x: number; y: number; nodeId: number };
 type PinchGesture = {
   lastDistance: number;
   lastCenter: PointerPosition;
@@ -202,6 +216,9 @@ export default function MindMapStudio({
   const [importPreview, setImportPreview] = useState<ImportResult | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [preferencesDraft, setPreferencesDraft] = useState<UserPreferences>(DEFAULT_PREFERENCES);
+  const [templateQuery, setTemplateQuery] = useState("");
+  const [templateCategory, setTemplateCategory] = useState<"全部" | TemplateCategory>("全部");
+  const [previewTemplateId, setPreviewTemplateId] = useState(BRANCH_TEMPLATES.find((template) => template.featured)?.id ?? BRANCH_TEMPLATES[0]?.id ?? "");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [editNote, setEditNote] = useState("");
@@ -214,6 +231,8 @@ export default function MindMapStudio({
   const [inboxError, setInboxError] = useState("");
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(() => new Set());
   const [aiMode, setAiMode] = useState<AiAssistantMode>("expand");
+  const [aiContextMenu, setAiContextMenu] = useState<AiContextMenu | null>(null);
+  const [activeAiCommand, setActiveAiCommand] = useState("");
   const [generatedSuggestions, setGeneratedSuggestions] = useState<AiSuggestion[] | null>(null);
   const [generatedForNodeId, setGeneratedForNodeId] = useState<number | null>(null);
   const [expansionSummary, setExpansionSummary] = useState("");
@@ -280,6 +299,21 @@ export default function MindMapStudio({
     setZoom(saved.zoom);
     zoomRef.current = saved.zoom;
   }, []);
+  useEffect(() => {
+    if (!aiContextMenu) return;
+    const close = () => setAiContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", close);
+    };
+  }, [aiContextMenu]);
   const selected = nodes.find((node) => node.id === selectedId) ?? nodes[0];
   const inboxScope = persistence.mode === "cloud" ? persistence.mapId : "local";
   const viewStateScope = inboxScope;
@@ -291,6 +325,13 @@ export default function MindMapStudio({
   const existingChildTitles = new Set(nodes.filter((node) => node.parent === selected.id).map((node) => node.text.trim().toLocaleLowerCase("zh-TW")));
   const pendingExpansion = generatedExpansion.filter((suggestion) => !existingChildTitles.has(suggestion.title.trim().toLocaleLowerCase("zh-TW")));
   const visibleExplanation = explanationForNodeId === selected.id ? aiExplanation : null;
+  const filteredTemplates = useMemo(
+    () => filterBranchTemplates(BRANCH_TEMPLATES, templateQuery, templateCategory),
+    [templateCategory, templateQuery],
+  );
+  const previewTemplate = BRANCH_TEMPLATES.find((template) => template.id === previewTemplateId)
+    ?? filteredTemplates[0]
+    ?? BRANCH_TEMPLATES[0];
 
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const childrenByParent = useMemo(() => buildChildrenByParent(nodes), [nodes]);
@@ -1464,39 +1505,48 @@ export default function MindMapStudio({
     setOutlineDropId(null);
   }
 
-  async function askAI(requestedMode: AiAssistantMode = aiMode) {
+  async function requestAI(
+    focusNode: NodeItem,
+    requestedMode: AiMode,
+    requestedPrompt: string,
+    commandLabel = "",
+  ) {
     if (aiLoading) return;
     setAiLoading(true);
     setAiError("");
+    setSelectedId(focusNode.id);
+    setActiveAiCommand(commandLabel);
+    setAiMode(requestedMode === "explain" ? "explain" : "expand");
+    setMobileAiOpen(true);
     try {
       const response = await fetch("/api/suggest", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: requestedMode, prompt: prompt.trim(), focusNodeId: selected.id, contextNodeIds: [], nodes }),
+        body: JSON.stringify({ mode: requestedMode, prompt: requestedPrompt.trim(), focusNodeId: focusNode.id, contextNodeIds: [], nodes }),
       });
       const data = await response.json() as { summary?: string; suggestions?: AiSuggestion[]; explanation?: AiExplanation; error?: string };
       if (!response.ok || !data.summary) {
         setAiError(data.error || "AI 暫時無法回應，請稍後再試。");
         return;
       }
-      if (requestedMode === "expand") {
+      if (requestedMode !== "explain") {
         if (!data.suggestions?.length) {
           setAiError("AI 擴寫內容不完整，請再試一次。");
           return;
         }
         setGeneratedSuggestions(data.suggestions);
-        setGeneratedForNodeId(selected.id);
+        setGeneratedForNodeId(focusNode.id);
         setExpansionSummary(data.summary);
-        flashToast(`AI 已準備 ${data.suggestions.length} 個擴寫節點`);
+        flashToast(`AI「${commandLabel || "展開想法"}」已準備 ${data.suggestions.length} 個結果`);
       } else {
         if (!data.explanation) {
           setAiError("AI 概念解釋不完整，請再試一次。");
           return;
         }
         setAiExplanation(data.explanation);
-        setExplanationForNodeId(selected.id);
+        setExplanationForNodeId(focusNode.id);
         setExplanationSummary(data.summary);
-        flashToast("AI 已完成概念解讀");
+        flashToast(`AI 已完成「${commandLabel || "概念解讀"}」`);
       }
       setPrompt("");
     } catch {
@@ -1504,6 +1554,34 @@ export default function MindMapStudio({
     } finally {
       setAiLoading(false);
     }
+  }
+
+  async function askAI(requestedMode: AiAssistantMode = aiMode) {
+    await requestAI(selected, requestedMode, prompt, requestedMode === "expand" ? "展開想法" : "概念解讀");
+  }
+
+  function openAiContextMenu(event: ReactMouseEvent, node: NodeItem) {
+    event.preventDefault();
+    event.stopPropagation();
+    const width = 226;
+    const height = 424;
+    const targetRect = event.currentTarget.getBoundingClientRect();
+    const pointerX = event.clientX || targetRect.right;
+    const pointerY = event.clientY || targetRect.bottom;
+    setSelectedId(node.id);
+    setAiContextMenu({
+      nodeId: node.id,
+      x: Math.max(8, Math.min(pointerX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(pointerY, window.innerHeight - height - 8)),
+    });
+  }
+
+  function runAiAssistantCommand(commandId: AiAssistantCommand) {
+    const command = AI_ASSISTANT_COMMANDS.find((item) => item.id === commandId);
+    const focusNode = aiContextMenu ? nodeById.get(aiContextMenu.nodeId) : selected;
+    setAiContextMenu(null);
+    if (!command || !focusNode) return;
+    void requestAI(focusNode, command.mode, command.prompt, command.label);
   }
 
   function downloadFile(parts: BlobPart[], type: string, extension: string) {
@@ -1911,6 +1989,7 @@ export default function MindMapStudio({
                 onPointerDown={(event) => beginNodeDrag(event, node)}
                 onFocus={(event) => { if (event.target !== event.currentTarget) return; setSelectedId(node.id); keepNodeInView(event.currentTarget); }}
                 onDoubleClick={() => beginEdit(node)}
+                onContextMenu={(event) => openAiContextMenu(event, node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div className="node-copy"><h3>{node.text}</h3><p>{node.note}</p></div>}
                 {editingId !== node.id && node.id === selectedId && hasChildren && <button
@@ -1923,6 +2002,7 @@ export default function MindMapStudio({
                   onClick={(event) => { event.stopPropagation(); toggleCollapsed(node.id); }}
                 ><span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>{isCollapsed ? "展開" : "收合"} {childCount}</button>}
                 {editingId !== node.id && <div className="node-actions">
+                  <button className="node-ai-button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => openAiContextMenu(event, node)} aria-label={`對${node.text}使用 AI Assistant`} aria-haspopup="menu">✦</button>
                   <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginEdit(node); }} aria-label={`編輯${node.text}`}>✎</button>
                   {hasChildren && <button data-testid={`auto-layout-branch-${node.id}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); applyAutoLayout(node.id); }} aria-label={`智慧整理${node.text}分支`}>⌗</button>}
                   {node.parent !== null && <button data-testid={`transplant-node-${node.id}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); beginTransplant(node); }} aria-label={`移植${node.text}分支`} aria-haspopup="dialog">⇢</button>}
@@ -1943,6 +2023,7 @@ export default function MindMapStudio({
             const draggable = node.parent !== null && editingId !== node.id;
             return <div
               className={`outline-row ${node.id === selectedId ? "selected" : ""} ${matchesSearch ? "search-match" : ""} ${outlineDragId === node.id ? "dragging" : ""} ${outlineDropId === node.id ? "drop-target" : ""}`}
+              onContextMenu={(event) => openAiContextMenu(event, node)}
               style={{ paddingLeft: 18 + depth * 28 }}
               key={node.id}
               draggable={draggable}
@@ -1972,6 +2053,7 @@ export default function MindMapStudio({
           <button className="ai-header" onClick={() => setMobileAiOpen((open) => !open)} aria-expanded={mobileAiOpen}><div className="ai-orb">✦</div><div><span>AI 思考助手</span><small>自動擴寫，也快速讀懂概念</small></div><span className="sheet-handle" aria-hidden="true">⌃</span></button>
           <div className="ai-content">
             <div className="focus-card"><span className={`focus-dot ${selected.tone}`} /><div><small>目前節點</small><strong>{selected.text}</strong>{selected.note && <p>{selected.note}</p>}</div></div>
+            {activeAiCommand && <div className="active-ai-command"><span aria-hidden="true">✦</span>節點指令：{activeAiCommand}</div>}
             <div className="ai-mode-switch" role="tablist" aria-label="AI 輔助功能">
               <button type="button" role="tab" aria-selected={aiMode === "expand"} className={aiMode === "expand" ? "active" : ""} data-testid="ai-mode-expand" onClick={() => { setAiMode("expand"); setAiError(""); }} disabled={aiLoading}><strong>自動擴寫</strong><span>生成互補子節點</span></button>
               <button type="button" role="tab" aria-selected={aiMode === "explain"} className={aiMode === "explain" ? "active" : ""} data-testid="ai-mode-explain" onClick={() => { setAiMode("explain"); setAiError(""); }} disabled={aiLoading}><strong>概念解讀</strong><span>說明重點與關聯</span></button>
@@ -2010,6 +2092,29 @@ export default function MindMapStudio({
           </div>
         </aside>
       </section>
+      {aiContextMenu && <div
+        className="ai-context-menu"
+        role="menu"
+        aria-label={`對「${nodeById.get(aiContextMenu.nodeId)?.text ?? "節點"}」使用 AI`}
+        data-testid="ai-context-menu"
+        style={{ left: aiContextMenu.x, top: aiContextMenu.y }}
+        onPointerDown={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        <header><span>✦</span><div><strong>AI Assistant</strong><small>{nodeById.get(aiContextMenu.nodeId)?.text}</small></div></header>
+        <div className="ai-context-actions">
+          {AI_ASSISTANT_COMMANDS.map((command, index) => <button
+            type="button"
+            role="menuitem"
+            key={command.id}
+            data-command={command.id}
+            className={index === 5 ? "section-start" : ""}
+            onClick={() => runAiAssistantCommand(command.id)}
+            disabled={aiLoading}
+          ><span aria-hidden="true">{command.icon}</span><strong>{command.label}</strong><small aria-hidden="true">›</small></button>)}
+        </div>
+        <footer>右鍵節點即可再次開啟</footer>
+      </div>}
       {transplantingNode && <div className="modal-backdrop" onMouseDown={closeTransplant}>
         <section className="transplant-modal" role="dialog" aria-modal="true" aria-labelledby="transplant-title" data-testid="transplant-dialog" onMouseDown={(event) => event.stopPropagation()}>
           <span className="modal-kicker">移植分支</span>
@@ -2033,19 +2138,45 @@ export default function MindMapStudio({
         </section>
       </div>}
       {utilityModal === "templates" && <div className="modal-backdrop" onMouseDown={() => setUtilityModal(null)}>
-        <section className="utility-modal" role="dialog" aria-modal="true" aria-labelledby="template-title" data-testid="template-dialog" onMouseDown={(event) => event.stopPropagation()}>
-          <span className="modal-kicker">分支範本</span>
-          <h2 id="template-title">在「{selected.text}」下建立結構</h2>
-          <p>範本會成為目前節點的子分支，整次套用可一次復原。</p>
-          <div className="template-grid">
-            {BRANCH_TEMPLATES.map((template) => <article key={template.id}>
-              <strong>{template.title}</strong>
-              <p>{template.description}</p>
-              <small>{template.nodes.length} 個節點</small>
-              <button type="button" onClick={() => insertTemplate(template.id)}>使用此範本</button>
-            </article>)}
+        <section className="utility-modal template-marketplace" role="dialog" aria-modal="true" aria-labelledby="template-title" data-testid="template-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <header className="marketplace-header">
+            <div><span className="modal-kicker">TEMPLATE MARKETPLACE</span><h2 id="template-title">範本商城</h2><p>選擇成熟的思考結構，套用到「{selected.text}」下方。</p></div>
+            <button type="button" onClick={() => setUtilityModal(null)} aria-label="關閉範本商城">×</button>
+          </header>
+          <div className="marketplace-toolbar">
+            <label><span aria-hidden="true">⌕</span><input value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} placeholder="搜尋範本、用途或標籤" aria-label="搜尋範本商城" /></label>
+            <span>{filteredTemplates.length} 個範本</span>
           </div>
-          <footer><button type="button" onClick={() => setUtilityModal(null)}>取消</button></footer>
+          <nav className="template-categories" aria-label="範本分類">
+            {TEMPLATE_CATEGORIES.map((category) => <button type="button" key={category} className={templateCategory === category ? "active" : ""} onClick={() => setTemplateCategory(category)}>{category}</button>)}
+          </nav>
+          <div className="marketplace-layout">
+            <div className="template-grid" aria-live="polite">
+              {filteredTemplates.map((template) => <article key={template.id} className={previewTemplate?.id === template.id ? "selected" : ""}>
+                <button type="button" className="template-card-main" onClick={() => setPreviewTemplateId(template.id)} aria-label={`預覽${template.title}`}>
+                  <span className="template-icon" aria-hidden="true">{template.icon}</span>
+                  <span className="template-category">{template.featured ? "精選 · " : ""}{template.category}</span>
+                  <strong>{template.title}</strong>
+                  <p>{template.description}</p>
+                  <small>{template.nodes.length} 個節點 · {template.author}</small>
+                </button>
+                <button type="button" className="template-use" onClick={() => insertTemplate(template.id)}>使用範本</button>
+              </article>)}
+              {!filteredTemplates.length && <div className="template-empty"><span>⌕</span><strong>找不到相符範本</strong><p>換個關鍵字或選擇「全部」分類。</p></div>}
+            </div>
+            {previewTemplate && <aside className="template-preview" aria-label="範本預覽">
+              <div className="preview-heading"><span>{previewTemplate.icon}</span><div><small>{previewTemplate.category} · {previewTemplate.author}</small><strong>{previewTemplate.title}</strong></div></div>
+              <p>{previewTemplate.description}</p>
+              <div className="preview-tree">
+                {previewTemplate.nodes.map((node) => {
+                  const parent = node.parentKey ? previewTemplate.nodes.find((candidate) => candidate.key === node.parentKey) : null;
+                  return <div key={node.key} className={node.parentKey === null ? "root" : ""}><span aria-hidden="true">{node.parentKey === null ? "●" : "└"}</span><div><strong>{node.text}</strong><small>{parent ? `位於「${parent.text}」下` : "範本根節點"}</small></div></div>;
+                })}
+              </div>
+              <div className="preview-tags">{previewTemplate.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+              <button type="button" className="primary marketplace-apply" onClick={() => insertTemplate(previewTemplate.id)}>套用到「{selected.text}」</button>
+            </aside>}
+          </div>
         </section>
       </div>}
       {utilityModal === "import" && <div className="modal-backdrop" onMouseDown={() => setUtilityModal(null)}>

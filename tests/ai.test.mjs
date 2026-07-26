@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAiInput, extractAiResponseText, parseAiExplanationResponse, parseAiHistory, parseAiResponse, parseAiSuggestRequest } from "../app/lib/ai.ts";
+import { AI_ASSISTANT_COMMANDS, buildAiInput, extractAiResponseText, getAiAssistantCommand, parseAiExplanationResponse, parseAiHistory, parseAiResponse, parseAiSuggestRequest } from "../app/lib/ai.ts";
 
 const nodes = [
   { id: 1, parent: null, text: "理想生活", note: "中心", x: 0, y: 0, tone: "ink" },
@@ -23,6 +23,17 @@ test("AI prompt includes mode, focus and selected node context", () => {
   assert.match(input, /質疑/);
   assert.match(input, /\[1\].*理想生活/);
   assert.match(input, /找盲點/);
+});
+
+test("node AI Assistant exposes eight safe commands with explicit result types", () => {
+  assert.deepEqual(AI_ASSISTANT_COMMANDS.map((command) => command.id), ["expand", "risks", "swot", "okr", "brainstorm", "simplify", "translate", "summary"]);
+  assert.equal(getAiAssistantCommand("risks").mode, "challenge");
+  assert.equal(getAiAssistantCommand("simplify").result, "explanation");
+  assert.equal(getAiAssistantCommand("unknown"), null);
+  for (const command of AI_ASSISTANT_COMMANDS) {
+    assert.ok(command.label);
+    assert.ok(command.prompt.length >= 10);
+  }
 });
 
 test("AI expansion prompt includes existing children and asks for non-duplicate nodes", () => {

@@ -8,7 +8,7 @@ import {
   resetPreferences,
   savePreferences,
 } from "../app/lib/preferences.ts";
-import { BRANCH_TEMPLATES, applyBranchTemplate, duplicateBranch } from "../app/lib/reuse.ts";
+import { BRANCH_TEMPLATES, TEMPLATE_CATEGORIES, applyBranchTemplate, duplicateBranch, filterBranchTemplates } from "../app/lib/reuse.ts";
 
 const nodes = [
   { id: 1, parent: null, text: "中心", note: "", x: 400, y: 280, tone: "ink" },
@@ -28,12 +28,25 @@ test("branch duplication assigns fresh ids and remaps the whole subtree", () => 
 });
 
 test("built-in templates create reusable, correctly parented subtrees", () => {
-  assert.equal(BRANCH_TEMPLATES.length, 3);
+  assert.equal(BRANCH_TEMPLATES.length, 11);
   const result = applyBranchTemplate(nodes, 2, BRANCH_TEMPLATES[0]);
   assert.ok(result);
   assert.equal(result.nodes.find((node) => node.id === result.rootId).parent, 2);
   const createdIds = new Set(result.nodes.slice(nodes.length).map((node) => node.id));
   for (const node of result.nodes.slice(nodes.length + 1)) assert.ok(createdIds.has(node.parent));
+});
+
+test("template marketplace filters categories, tags, descriptions, and empty queries", () => {
+  assert.deepEqual(TEMPLATE_CATEGORIES, ["全部", "目標", "專案", "教育", "研究", "行銷", "敏捷", "AI", "生活"]);
+  assert.equal(filterBranchTemplates(BRANCH_TEMPLATES, "", "全部").length, 11);
+  assert.deepEqual(filterBranchTemplates(BRANCH_TEMPLATES, "", "AI").map((template) => template.id), ["ai-prompt"]);
+  assert.deepEqual(filterBranchTemplates(BRANCH_TEMPLATES, "論文", "全部").map((template) => template.id), ["research-plan"]);
+  assert.deepEqual(filterBranchTemplates(BRANCH_TEMPLATES, "不存在", "全部"), []);
+  for (const template of BRANCH_TEMPLATES) {
+    assert.ok(template.author);
+    assert.ok(template.icon);
+    assert.ok(template.tags.length);
+  }
 });
 
 test("JSON import supports a versioned envelope and reports bad hierarchy by node", () => {

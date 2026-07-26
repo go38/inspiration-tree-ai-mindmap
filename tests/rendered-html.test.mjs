@@ -218,4 +218,8 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(suggestRoute, /EXPLANATION_RESPONSE_SCHEMA/);
   assert.match(suggestRoute, /parseAiExplanationResponse/);
   assert.match(suggestRoute, /gpt-5\.6-luna/);
+  assert.match(studio, /onContextMenu=\{\(event\) => openAiContextMenu\(event, node\)\}/);
+  assert.match(studio, /data-testid="ai-context-menu"/);
+  assert.match(studio, /runAiAssistantCommand\(command\.id\)/);
+  assert.match(studio, /aria-label=\{`對\$\{node\.text\}使用 AI Assistant`\}/);
 });
