@@ -581,6 +581,8 @@
 ### 驗證與限制
 
 - 67 項自動測試通過，production build 與 `git diff --check` 通過。
+- Git 提交 `cb5e916 Add AI assistant and template marketplace` 已推送至 `origin/agent/p0-15-performance-benchmark`。
+- Sites 正式部署成功，公開網址：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
 - 目前目錄隨版本內建；尚無投稿、評分、收藏、遠端更新或付費交易。
 - 本機 Cloudflare 執行環境限制仍阻擋互動式瀏覽器驗收。
 
