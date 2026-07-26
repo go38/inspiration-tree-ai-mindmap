@@ -184,6 +184,41 @@ export function buildDepthMap(nodes: NodeItem[]): Map<number, number> {
   return depths;
 }
 
+/** Group children once so large-map render paths avoid repeated full-array scans. */
+export function buildChildrenByParent(nodes: NodeItem[]): Map<number, NodeItem[]> {
+  const children = new Map<number, NodeItem[]>();
+  for (const node of nodes) {
+    if (node.parent === null) continue;
+    const siblings = children.get(node.parent);
+    if (siblings) siblings.push(node);
+    else children.set(node.parent, [node]);
+  }
+  return children;
+}
+
+/** Normalize searchable node text once per node collection. */
+export function buildNodeSearchIndex(nodes: NodeItem[], locale = "zh-TW"): Map<number, string> {
+  return new Map(nodes.map((node) => [
+    node.id,
+    `${node.text} ${node.note}`.toLocaleLowerCase(locale),
+  ]));
+}
+
+/** Return matching ids without allocating filtered node copies for rendering. */
+export function findMatchingNodeIds(
+  searchIndex: Map<number, string>,
+  query: string,
+  locale = "zh-TW",
+): Set<number> {
+  const normalized = query.trim().toLocaleLowerCase(locale);
+  if (!normalized) return new Set();
+  const matches = new Set<number>();
+  for (const [id, searchableText] of searchIndex) {
+    if (searchableText.includes(normalized)) matches.add(id);
+  }
+  return matches;
+}
+
 export function nodeMetricsForDepth(depth: number): NodeVisualMetrics {
   if (depth <= 0) return { level: "root", width: LAYOUT_ROOT_WIDTH, height: LAYOUT_ROOT_HEIGHT };
   if (depth === 1) return { level: "branch", width: LAYOUT_BRANCH_WIDTH, height: LAYOUT_BRANCH_HEIGHT };

@@ -4,17 +4,22 @@ import test from "node:test";
 
 // Server-render the built worker and assert the real mind map app ships,
 // not a placeholder skeleton.
-async function render() {
+async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
+
+test("production hides the local large-map benchmark route", async () => {
+  const response = await render("/performance-benchmark?nodes=500");
+  assert.equal(response.status, 404);
+});
 
 test("server-renders the mind map studio", async () => {
   const response = await render();
@@ -60,7 +65,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState] = await Promise.all([
+  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -71,12 +76,23 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/api/suggest/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/inbox.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/viewState.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/performance-benchmark/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/performance-benchmark.mjs", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin client wrapper around the shared studio.
   assert.match(page, /^"use client";/);
   assert.match(page, /<MindMapStudio/);
   assert.doesNotMatch(page, /_sites-preview|SkeletonPreview|codex-preview/);
+
+  // P0-15: search work is deferred, large outline traversals share indexes,
+  // and the visual benchmark route can never be exposed in production.
+  assert.match(studio, /useDeferredValue\(searchQuery\)/);
+  assert.match(studio, /buildChildrenByParent\(nodes\)/);
+  assert.match(studio, /findMatchingNodeIds\(searchIndex, deferredSearchQuery\)/);
+  assert.match(benchmarkPage, /process\.env\.NODE_ENV === "production"\) notFound\(\)/);
+  assert.match(benchmarkScript, /const SIZES = \[100, 300, 500\]/);
+  assert.match(benchmarkScript, /INTERACTION_BUDGET_MS = 16/);
 
   // The studio holds the interaction logic and is wired to the pure helpers.
   assert.match(studio, /^"use client";/);

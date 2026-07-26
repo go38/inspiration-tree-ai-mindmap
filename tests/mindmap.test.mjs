@@ -7,14 +7,17 @@ import {
   HISTORY_LIMIT,
   applyTreeNodeOffsets,
   autoLayoutNodes,
+  buildChildrenByParent,
   buildDepthMap,
   buildMarkdownLines,
+  buildNodeSearchIndex,
   calculateAnchoredZoom,
   calculateFitTransform,
   collectSubtreeIds,
   countConnectionCrossings,
   createCanvasBranchRibbons,
   depthOf,
+  findMatchingNodeIds,
   createTreeBranchRibbons,
   historyShortcutForKey,
   indentOutlineNode,
@@ -57,6 +60,18 @@ test("depthOf counts steps from the root (root is depth 0)", () => {
   assert.equal(depthOf(nodes, nodes[0]), 0);
   assert.equal(depthOf(nodes, nodes[1]), 1);
   assert.equal(depthOf(nodes, nodes[2]), 2);
+});
+
+test("large-map indexes group children and match normalized search text", () => {
+  const nodes = sampleNodes();
+  const children = buildChildrenByParent(nodes);
+  assert.deepEqual(children.get(1).map((node) => node.id), [2, 4]);
+  assert.deepEqual(children.get(2).map((node) => node.id), [3]);
+
+  const search = buildNodeSearchIndex(nodes);
+  assert.deepEqual([...findMatchingNodeIds(search, " 分支 ")], [2, 4]);
+  assert.deepEqual([...findMatchingNodeIds(search, "第一層")], [2]);
+  assert.equal(findMatchingNodeIds(search, "   ").size, 0);
 });
 
 test("hierarchy metrics map root, first-level, and deeper nodes to large, medium, and small cards", () => {

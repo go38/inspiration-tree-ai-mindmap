@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.21.0`
+- 目前產品版本：`v0.22.0`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -23,6 +23,7 @@
 npm install
 npm run dev
 npm run build
+npm run benchmark
 ```
 
 This starter does not use `wrangler.jsonc`.
@@ -44,6 +45,12 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.22.0 重點
+
+- 新增可重複執行的 100／300／500 節點效能基準，涵蓋拖曳狀態更新、搜尋、文字輸入、畫面衍生資料與樹狀布局。
+- 搜尋改用延後值維持輸入優先度；大綱階層、子節點數量與同層資料改為共用索引，移除大型地圖中的重複全圖掃描。
+- 本機開發可使用 `/performance-benchmark?nodes=500` 進行實際畫面驗證；正式環境不公開此入口。
 
 ## v0.21.0 重點
 

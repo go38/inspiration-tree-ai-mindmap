@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   applyTreeNodeOffsets,
   autoLayoutNodes,
+  buildChildrenByParent,
   buildDepthMap,
   buildMarkdownLines,
+  buildNodeSearchIndex,
   calculateAnchoredZoom,
   calculateFitTransform,
   collectSubtreeIds,
   createCanvasBranchRibbons,
   createTreeBranchRibbons,
   depthOf,
+  findMatchingNodeIds,
   historyShortcutForKey,
   indentOutlineNode,
   layoutTreeViewNodes,
@@ -264,14 +267,13 @@ export default function MindMapStudio({
   const pendingExpansion = generatedExpansion.filter((suggestion) => !existingChildTitles.has(suggestion.title.trim().toLocaleLowerCase("zh-TW")));
   const visibleExplanation = explanationForNodeId === selected.id ? aiExplanation : null;
 
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const childrenByParent = useMemo(() => buildChildrenByParent(nodes), [nodes]);
   const depthById = useMemo(() => buildDepthMap(nodes), [nodes]);
-  const childCountById = useMemo(() => {
-    const counts = new Map<number, number>();
-    nodes.forEach((node) => {
-      if (node.parent !== null) counts.set(node.parent, (counts.get(node.parent) ?? 0) + 1);
-    });
-    return counts;
-  }, [nodes]);
+  const childCountById = useMemo(
+    () => new Map([...childrenByParent].map(([id, children]) => [id, children.length])),
+    [childrenByParent],
+  );
   const visibleNodes = useMemo(
     () => visibleNodesForCollapsed(nodes, collapsedIds),
     [collapsedIds, nodes],
@@ -292,12 +294,17 @@ export default function MindMapStudio({
     const append = (node: NodeItem, depth: number) => {
       ordered.push({ node, depth });
       if (collapsedIds.has(node.id)) return;
-      nodes.filter((item) => item.parent === node.id).forEach((child) => append(child, depth + 1));
+      (childrenByParent.get(node.id) ?? []).forEach((child) => append(child, depth + 1));
     };
     if (root) append(root, 0);
     return ordered;
-  }, [collapsedIds, nodes]);
-  const normalizedSearch = searchQuery.trim().toLocaleLowerCase("zh-TW");
+  }, [childrenByParent, collapsedIds, nodes]);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const searchIndex = useMemo(() => buildNodeSearchIndex(nodes), [nodes]);
+  const searchMatchIds = useMemo(
+    () => findMatchingNodeIds(searchIndex, deferredSearchQuery),
+    [deferredSearchQuery, searchIndex],
+  );
   const transplantingNode = transplantingId === null
     ? undefined
     : nodes.find((node) => node.id === transplantingId);
@@ -1752,7 +1759,7 @@ export default function MindMapStudio({
               ) : <path key={line.id} className={`connection ${line.kind} ${line.tone}`} d={line.path} />)}
             </svg>
             {displayNodes.map((node) => {
-              const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
+              const matchesSearch = searchMatchIds.has(node.id);
               const childCount = childCountById.get(node.id) ?? 0;
               const hasChildren = childCount > 0;
               const visualLevel = nodeMetricsForDepth(depthById.get(node.id) ?? 1).level;
@@ -1788,11 +1795,11 @@ export default function MindMapStudio({
           </div>
           <div ref={zoomControlRef} className="zoom-control"><button onClick={() => zoomFromControls(-10)} aria-label="縮小，最低 10%" title="縮小">−</button><span>{Math.round(zoom)}%</span><button onClick={() => zoomFromControls(10)} aria-label="放大，最高 200%" title="放大">＋</button><button onClick={fitToView} aria-label="適合畫面" title="適合畫面">◎</button></div>
           </> : <div className="outline-view"><header><div><span>結構化大綱</span><small>拖曳同層排序；使用縮排／凸排調整分支層級</small></div><strong>{outlineNodes.length} 個可見節點</strong></header><div className="outline-list">{outlineNodes.map(({ node, depth }) => {
-            const hasChildren = nodes.some((item) => item.parent === node.id);
-            const matchesSearch = normalizedSearch && `${node.text} ${node.note}`.toLocaleLowerCase("zh-TW").includes(normalizedSearch);
-            const siblings = nodes.filter((item) => item.parent === node.parent);
+            const hasChildren = childCountById.has(node.id);
+            const matchesSearch = searchMatchIds.has(node.id);
+            const siblings = node.parent === null ? [node] : (childrenByParent.get(node.parent) ?? []);
             const siblingIndex = siblings.findIndex((item) => item.id === node.id);
-            const parent = node.parent === null ? undefined : nodes.find((item) => item.id === node.parent);
+            const parent = node.parent === null ? undefined : nodeById.get(node.parent);
             const previousSibling = siblingIndex > 0 ? siblings[siblingIndex - 1] : undefined;
             const canOutdent = Boolean(parent && parent.parent !== null);
             const draggable = node.parent !== null && editingId !== node.id;
