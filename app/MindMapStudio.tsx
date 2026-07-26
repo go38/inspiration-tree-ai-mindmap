@@ -16,10 +16,12 @@ import {
   historyShortcutForKey,
   indentOutlineNode,
   layoutTreeViewNodes,
+  moveNodeBy,
   moveSiblingNode,
   nextNodeId,
   nodeBounds,
   nodeMetricsForDepth,
+  nudgeVectorForKey,
   outdentOutlineNode,
   pushHistory,
   reparentSubtree,
@@ -130,6 +132,10 @@ type NodeDrag = {
 
 const MIN_ZOOM = 10;
 const MAX_ZOOM = 200;
+// Arrow presses closer together than this stay inside one undo entry.
+const NUDGE_BURST_MS = 700;
+// Just past the .24s node position transition in globals.css.
+const NUDGE_SETTLE_MS = 260;
 const TREE_TONE_COLORS: Record<"trunk" | NodeItem["tone"], string> = {
   trunk: "#7a5635",
   ink: "#725035",
@@ -210,6 +216,8 @@ export default function MindMapStudio({
   const panDrag = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const pointerFrame = useRef<number | null>(null);
   const pendingPointer = useRef<PointerPosition | null>(null);
+  const nudgeBurst = useRef<number | null>(null);
+  const nudgeSettle = useRef<number | null>(null);
   const viewportFrame = useRef<number | null>(null);
   const pendingViewport = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
   const touchPointers = useRef<Map<number, PointerPosition>>(new Map());
@@ -548,6 +556,8 @@ export default function MindMapStudio({
   useEffect(() => () => {
     if (pointerFrame.current !== null) window.cancelAnimationFrame(pointerFrame.current);
     if (viewportFrame.current !== null) window.cancelAnimationFrame(viewportFrame.current);
+    if (nudgeBurst.current !== null) window.clearTimeout(nudgeBurst.current);
+    if (nudgeSettle.current !== null) window.clearTimeout(nudgeSettle.current);
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -1220,7 +1230,67 @@ export default function MindMapStudio({
       before: viewMode === "canvas" ? { nodes, selectedId } : undefined,
     };
     setDraggingId(node.id);
+    // preventDefault above suppresses the implicit focus, so take it explicitly:
+    // arrow-key moves need the pressed node to actually hold focus.
+    event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  /**
+   * Pan just enough to keep a focused node inside the usable canvas.
+   *
+   * Tabbing through the map would otherwise land on nodes hidden behind the
+   * command bar, the zoom controls, or the current pan offset.
+   */
+  function keepNodeInView(element: HTMLElement) {
+    const canvas = canvasRef.current;
+    if (!canvas || viewMode === "outline") return;
+    const view = canvas.getBoundingClientRect();
+    const box = element.getBoundingClientRect();
+    const safeLeft = view.left + 16;
+    const safeRight = view.right - 16;
+    const safeTop = view.top + (commandBarRef.current?.offsetHeight ?? 38) + 26;
+    const safeBottom = view.bottom - (zoomControlRef.current?.offsetHeight ?? 44) - 28;
+    let dx = 0;
+    let dy = 0;
+    // Large nodes cannot fit entirely: align their leading edge instead.
+    if (box.left < safeLeft) dx = safeLeft - box.left;
+    else if (box.right > safeRight) dx = Math.max(safeRight - box.right, safeLeft - box.left);
+    if (box.top < safeTop) dy = safeTop - box.top;
+    else if (box.bottom > safeBottom) dy = Math.max(safeBottom - box.bottom, safeTop - box.top);
+    if (dx === 0 && dy === 0) return;
+    const pan = stagePanRef.current;
+    queueViewportUpdate(zoomRef.current, { x: pan.x + dx, y: pan.y + dy });
+  }
+
+  /**
+   * Keyboard alternative to dragging (P0-14): arrow keys move the selected node.
+   *
+   * Consecutive presses form one burst so a long move still costs a single undo
+   * entry, exactly like releasing a pointer drag.
+   */
+  function nudgeSelectedNode(delta: { x: number; y: number }) {
+    if (viewMode === "tree") {
+      // Tree offsets are view-only, so they follow the drag rule of not
+      // entering the undo history.
+      setTreeOffsets((current) => {
+        const offset = current[selectedId] ?? { x: 0, y: 0 };
+        return { ...current, [selectedId]: { x: offset.x + delta.x, y: offset.y + delta.y } };
+      });
+    } else {
+      if (nudgeBurst.current === null) checkpoint();
+      else window.clearTimeout(nudgeBurst.current);
+      nudgeBurst.current = window.setTimeout(() => { nudgeBurst.current = null; }, NUDGE_BURST_MS);
+      setNodes((current) => moveNodeBy(current, selectedId, delta));
+    }
+    // Follow the node only once its position transition has settled, so the
+    // measured rectangle is the final one.
+    if (nudgeSettle.current !== null) window.clearTimeout(nudgeSettle.current);
+    nudgeSettle.current = window.setTimeout(() => {
+      nudgeSettle.current = null;
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused.classList.contains("mind-node")) keepNodeInView(focused);
+    }, NUDGE_SETTLE_MS);
   }
 
   function moveOutlineNode(nodeId: number, delta: -1 | 1) {
@@ -1468,6 +1538,14 @@ export default function MindMapStudio({
         if (event.key === "Escape") cancelEdit();
         return;
       }
+      // Arrow keys only take over inside the map, so page scrolling elsewhere
+      // keeps working for keyboard users.
+      const nudge = viewMode === "outline" ? null : nudgeVectorForKey(event.key, event.shiftKey);
+      if (nudge && target?.closest(".mind-node, .canvas")) {
+        event.preventDefault();
+        nudgeSelectedNode(nudge);
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         addSiblingNode();
@@ -1483,7 +1561,7 @@ export default function MindMapStudio({
     return () => window.removeEventListener("keydown", onKeyDown);
     // Keyboard actions intentionally follow the latest selected node and map.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId, nodes, selectedId, transplantingId]);
+  }, [editingId, nodes, selectedId, transplantingId, viewMode]);
 
   const statusLabel = isCloud
     ? sync === "idle" && persistence.personal ? "個人地圖" : SYNC_LABEL[sync]
@@ -1627,7 +1705,7 @@ export default function MindMapStudio({
           ref={canvasRef}
           className={`canvas ${viewMode === "outline" ? "outline-active" : ""} ${viewMode === "tree" ? "tree-active" : ""} ${panning ? "panning" : ""} ${draggingId !== null ? "dragging-node" : ""}`}
           role="region"
-          aria-label="心智圖畫布，可拖曳平移、使用滑鼠滾輪或雙指縮放"
+          aria-label="心智圖畫布，可拖曳平移、使用滑鼠滾輪或雙指縮放；以 Tab 選取節點後，方向鍵可移動節點，按住 Shift 移動更多"
           data-testid="mind-map-canvas"
           onWheel={onCanvasWheel}
           onPointerDownCapture={onCanvasPointerDownCapture}
@@ -1646,7 +1724,7 @@ export default function MindMapStudio({
             <button className="fit-button" onClick={fitToView}>適合畫面</button>
           </div>
           {viewMode !== "outline" ? <>
-          <div className="canvas-hint">{viewMode === "tree" ? "拖曳平移 · 滾輪／雙指縮放 · 拖曳節點微調樹冠" : "拖曳平移 · 滾輪／雙指縮放 · 拖曳節點整理"}</div>
+          <div className="canvas-hint">{viewMode === "tree" ? "拖曳平移 · 滾輪／雙指縮放 · 拖曳或方向鍵微調樹冠" : "拖曳平移 · 滾輪／雙指縮放 · 拖曳或方向鍵移動節點"}</div>
           <div className="map-stage" style={{ transform: `translate(${stageOffset.x + stagePan.x}px, ${stageOffset.y + stagePan.y}px) scale(${zoom / 100})` }}>
             <svg className="connections-layer" viewBox="0 0 1080 650" aria-hidden="true">
               {viewMode === "tree" && <defs>{connections.map((line) => (
@@ -1684,7 +1762,9 @@ export default function MindMapStudio({
                 key={node.id}
                 className={`mind-node ${node.tone} level-${visualLevel} ${viewMode === "tree" ? "tree-node" : ""} ${viewMode === "tree" && !hasChildren ? "tree-leaf" : ""} ${node.id === selectedId ? "selected" : ""} ${node.id === draggingId ? "dragging" : ""} ${isCollapsed ? "collapsed" : ""} ${matchesSearch ? "search-match" : ""}`}
                 style={{ left: node.x, top: node.y }}
+                tabIndex={0}
                 onPointerDown={(event) => beginNodeDrag(event, node)}
+                onFocus={(event) => { if (event.target !== event.currentTarget) return; setSelectedId(node.id); keepNodeInView(event.currentTarget); }}
                 onDoubleClick={() => beginEdit(node)}
               >
                 {editingId === node.id ? <div className="node-editor" onPointerDown={(event) => event.stopPropagation()}><input autoFocus value={editText} onChange={(event) => setEditText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點標題" /><input value={editNote} onChange={(event) => setEditNote(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveInlineEdit(); if (event.key === "Escape") cancelEdit(); }} aria-label="節點說明" /><span><button onClick={saveInlineEdit}>儲存</button><button onClick={cancelEdit}>取消</button></span></div> : <div className="node-copy"><h3>{node.text}</h3><p>{node.note}</p></div>}

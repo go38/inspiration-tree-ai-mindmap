@@ -671,6 +671,35 @@ export function applyTreeNodeOffsets(nodes: NodeItem[], offsets: TreeNodeOffsets
   });
 }
 
+/** Keyboard step for the pointer-free alternative to dragging a node. */
+export const NODE_NUDGE_STEP = 8;
+/** Larger step used while Shift is held, so long moves stay practical. */
+export const NODE_NUDGE_LARGE_STEP = 32;
+
+/**
+ * Translate an arrow key into a canvas movement.
+ *
+ * Returns null for every other key so callers can leave normal keyboard
+ * behaviour — including page scrolling — untouched.
+ */
+export function nudgeVectorForKey(key: string, large = false): ViewportPoint | null {
+  const step = large ? NODE_NUDGE_LARGE_STEP : NODE_NUDGE_STEP;
+  if (key === "ArrowUp") return { x: 0, y: -step };
+  if (key === "ArrowDown") return { x: 0, y: step };
+  if (key === "ArrowLeft") return { x: -step, y: 0 };
+  if (key === "ArrowRight") return { x: step, y: 0 };
+  return null;
+}
+
+/** Move one node by a keyboard step; descendants keep their own positions. */
+export function moveNodeBy(nodes: NodeItem[], nodeId: number, delta: ViewportPoint): NodeItem[] {
+  if (delta.x === 0 && delta.y === 0) return nodes;
+  if (!nodes.some((node) => node.id === nodeId)) return nodes;
+  return nodes.map((node) => node.id === nodeId
+    ? { ...node, x: node.x + delta.x, y: node.y + delta.y }
+    : node);
+}
+
 /** Move a node before another sibling while preserving every subtree. */
 export function reorderSiblingNodes(nodes: NodeItem[], sourceId: number, targetId: number): NodeItem[] {
   if (sourceId === targetId) return nodes;

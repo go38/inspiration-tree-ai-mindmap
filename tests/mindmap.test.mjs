@@ -20,10 +20,14 @@ import {
   indentOutlineNode,
   layoutTreeViewNodes,
   nextNodeId,
+  moveNodeBy,
   moveSiblingNode,
   nodeBounds,
   nodeBoundsOverlap,
   nodeMetricsForDepth,
+  NODE_NUDGE_LARGE_STEP,
+  NODE_NUDGE_STEP,
+  nudgeVectorForKey,
   outdentOutlineNode,
   pushHistory,
   reparentSubtree,
@@ -117,6 +121,36 @@ test("anchored zoom keeps the same map point under the mouse or pinch center", (
   };
 
   assert.deepEqual(anchoredAfter, anchor);
+});
+
+test("arrow keys map to a canvas step and leave other keys alone", () => {
+  assert.deepEqual(nudgeVectorForKey("ArrowUp"), { x: 0, y: -NODE_NUDGE_STEP });
+  assert.deepEqual(nudgeVectorForKey("ArrowDown"), { x: 0, y: NODE_NUDGE_STEP });
+  assert.deepEqual(nudgeVectorForKey("ArrowLeft"), { x: -NODE_NUDGE_STEP, y: 0 });
+  assert.deepEqual(nudgeVectorForKey("ArrowRight"), { x: NODE_NUDGE_STEP, y: 0 });
+  // Shift covers longer distances without leaving the keyboard.
+  assert.deepEqual(nudgeVectorForKey("ArrowRight", true), { x: NODE_NUDGE_LARGE_STEP, y: 0 });
+  assert.ok(NODE_NUDGE_LARGE_STEP > NODE_NUDGE_STEP);
+  // Everything else must keep its normal behaviour, including page scrolling.
+  for (const key of ["Enter", "Tab", "a", "PageDown", "Home", " "]) {
+    assert.equal(nudgeVectorForKey(key), null);
+  }
+});
+
+test("moveNodeBy is the keyboard equivalent of dragging one node", () => {
+  const nodes = sampleNodes();
+  const target = nodes.find((node) => node.id === 2);
+  const moved = moveNodeBy(nodes, 2, { x: NODE_NUDGE_STEP, y: -NODE_NUDGE_STEP });
+
+  const next = moved.find((node) => node.id === 2);
+  assert.equal(next.x, target.x + NODE_NUDGE_STEP);
+  assert.equal(next.y, target.y - NODE_NUDGE_STEP);
+  // Descendants keep their own coordinates, exactly like a pointer drag.
+  assert.deepEqual(moved.filter((node) => node.id !== 2), nodes.filter((node) => node.id !== 2));
+  // Inputs are never mutated and no-ops return the original array.
+  assert.equal(nodes.find((node) => node.id === 2).x, target.x);
+  assert.equal(moveNodeBy(nodes, 2, { x: 0, y: 0 }), nodes);
+  assert.equal(moveNodeBy(nodes, 9999, { x: 4, y: 4 }), nodes);
 });
 
 test("collectSubtreeIds gathers a node and all descendants", () => {

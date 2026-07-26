@@ -93,7 +93,7 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /window\.requestAnimationFrame/);
   assert.match(studio, /applyTreeNodeOffsets/);
   assert.match(studio, /mode: viewMode === "tree" \? "tree" : "canvas"/);
-  assert.match(studio, /拖曳節點微調樹冠/);
+  assert.match(studio, /拖曳或方向鍵微調樹冠/);
   assert.match(studio, /autoLayoutNodes/);
   assert.match(studio, /applyAutoLayout/);
   assert.match(studio, /data-testid="auto-layout-all"/);
@@ -126,6 +126,47 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(globals, /\.ai-panel\s*\{[^}]*min-height:0[^}]*overflow:hidden/);
   assert.match(globals, /\.ai-content\s*\{[^}]*min-height:0[^}]*overflow-y:scroll[^}]*scrollbar-gutter:stable/);
   assert.match(globals, /\.ai-content::-webkit-scrollbar-thumb/);
+
+  // P0-14 touch and accessibility convergence.
+  // Every interactive role shares one focus indicator, and controls drawn on
+  // ink backgrounds switch to the warm ring so it stays visible.
+  assert.match(globals, /button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible,\[tabindex\]:focus-visible\s*\{[^}]*outline:3px solid var\(--focus-ring\)/);
+  assert.match(globals, /\.mind-node\.ink:focus-visible[^{]*\{[^}]*outline-color:var\(--sun\)/);
+  assert.match(globals, /\.mind-node:focus-visible\s*\{[^}]*outline:3px solid var\(--focus-ring\)/);
+  assert.doesNotMatch(globals, /outline:3px solid rgba\(237,118,95,\.38\)/, "the low-contrast focus ring must not come back");
+
+  // Touch pointers get 44px targets, including a floating node action row that
+  // cannot fit inside a 152px detail card.
+  const coarseBlock = globals.match(/@media \(pointer:coarse\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(coarseBlock, "a (pointer:coarse) block must exist");
+  assert.match(coarseBlock, /\.mind-node \.node-actions button,\.mind-node\.level-detail \.node-actions button\s*\{[^}]*width:44px;\s*height:44px/);
+  assert.match(coarseBlock, /\.mind-node:not\(\.selected\) \.node-actions\s*\{\s*display:none/);
+  assert.match(coarseBlock, /\.view-switch button,\.fit-button,\.layout-button\s*\{[^}]*min-height:44px/);
+  assert.match(coarseBlock, /\.outline-collapse\s*\{[^}]*width:44px;\s*height:44px/);
+  assert.match(coarseBlock, /\.prompt-box button\s*\{[^}]*width:44px;\s*height:44px/);
+  for (const smaller of coarseBlock.match(/(?:min-height|height|width):(\d+)px/g) ?? []) {
+    assert.ok(Number(smaller.match(/(\d+)px/)[1]) >= 44, `${smaller} is below the 44px touch target floor`);
+  }
+
+  // A 200%-zoomed viewport is short: the shell minimums must fit inside it
+  // rather than clipping panels out of reach.
+  assert.match(globals, /\.app-shell\s*\{[^}]*height:100dvh;\s*min-height:480px/);
+  assert.match(globals, /\.workspace\s*\{[^}]*height:calc\(100dvh - 76px\);\s*min-height:404px/);
+  assert.match(globals, /\.toolrail\s*\{[^}]*overflow-y:auto/);
+  // 1280x800 at 200% zoom is 640x400 CSS px, so nothing may demand more.
+  for (const shellMinimum of globals.match(/\.app-shell[^{]*\{[^}]*min-height:(\d+)px/g) ?? []) {
+    assert.ok(Number(shellMinimum.match(/min-height:(\d+)px/)[1]) <= 480, `${shellMinimum} is taller than a 200%-zoomed viewport`);
+  }
+  assert.doesNotMatch(globals, /min-height:680px|min-height:760px|min-height:604px|min-height:626px|min-height:556px/, "the pre-P0-14 shell minimums must not come back");
+
+  // Dragging always has a pointer-free alternative.
+  assert.match(studio, /nudgeVectorForKey\(event\.key, event\.shiftKey\)/);
+  assert.match(studio, /nudgeSelectedNode\(nudge\)/);
+  assert.match(studio, /target\?\.closest\("\.mind-node, \.canvas"\)/, "arrow keys must only take over inside the map");
+  assert.match(studio, /if \(nudgeBurst\.current === null\) checkpoint\(\)/, "one undo entry per burst of arrow presses");
+  assert.match(studio, /tabIndex=\{0\}/, "canvas nodes must be reachable by keyboard");
+  assert.match(studio, /onFocus=\{\(event\) => \{ if \(event\.target !== event\.currentTarget\) return; setSelectedId\(node\.id\); keepNodeInView\(event\.currentTarget\); \}\}/);
+  assert.match(studio, /function keepNodeInView/, "focused nodes must be panned out from behind the command bar and zoom controls");
   assert.doesNotMatch(studio, /AI_MODE_LABELS|多節點上下文|過去討論|預覽加入/);
   assert.match(studio, /saveDocumentTitle/);
   assert.match(studio, /href="\/maps"/);

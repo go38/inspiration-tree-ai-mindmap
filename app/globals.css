@@ -1,12 +1,17 @@
 @import "tailwindcss";
 
-:root { --paper:#f7f3ea; --warm-white:#fffcf6; --ink:#211f1a; --muted:#746f65; --line:#d9d1c4; --coral:#ed765f; --sage:#7f9876; --sun:#f3d892; --font-sans:"Avenir Next","Noto Sans TC","PingFang TC",sans-serif; --font-serif:"Noto Serif TC","Songti TC",Georgia,serif; }
+:root { --paper:#f7f3ea; --warm-white:#fffcf6; --ink:#211f1a; --muted:#746f65; --line:#d9d1c4; --coral:#ed765f; --sage:#7f9876; --sun:#f3d892; --focus-ring:#a5391f; --font-sans:"Avenir Next","Noto Sans TC","PingFang TC",sans-serif; --font-serif:"Noto Serif TC","Songti TC",Georgia,serif; }
 * { box-sizing:border-box; }
 html,body { margin:0; min-height:100%; background:var(--paper); color:var(--ink); font-family:var(--font-sans),"Noto Sans TC",sans-serif; }
 button,textarea,input,select { font:inherit; }
 button { color:inherit; }
-button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px solid rgba(237,118,95,.38); outline-offset:2px; }
-.app-shell { height:100vh; min-height:680px; overflow:hidden; background:var(--paper); }
+/* One focus indicator for every interactive role, at 3:1 or better against the
+   surface behind it: dark ring on paper, warm ring on ink-filled controls. */
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible,[tabindex]:focus-visible { outline:3px solid var(--focus-ring); outline-offset:2px; }
+.mind-node.ink:focus-visible,.share-button:focus-visible,.workspace-create:focus-visible,.simple-prompt button:focus-visible,.prompt-box button:focus-visible,.view-switch button.active:focus-visible,.inbox-compose-actions button.primary:focus-visible,.suggestion-actions button.primary:focus-visible,.suggestion-modal footer button.primary:focus-visible,.transplant-modal footer button.primary:focus-visible,.concept-explanation footer button:focus-visible,.workspace-create-form button[type="submit"]:focus-visible,.map-rename button[type="submit"]:focus-visible,.workspace-notice a:focus-visible,.notice-card .share-button:focus-visible { outline-color:var(--sun); }
+/* Viewport-locked, but the minimums stay under a 200%-zoomed viewport so no
+   panel is clipped out of reach. */
+.app-shell { height:100vh; height:100dvh; min-height:480px; overflow:hidden; background:var(--paper); }
 .topbar { height:76px; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:0 22px; border-bottom:1px solid var(--line); background:rgba(255,252,246,.94); }
 .brand { display:flex; align-items:center; gap:10px; font-family:var(--font-serif),serif; font-weight:700; font-size:20px; }
 .brand-mark { display:grid; place-items:center; width:36px; height:36px; background:var(--ink); color:var(--warm-white); border-radius:50% 50% 46% 54%; font-size:16px; }
@@ -40,8 +45,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .export-menu strong { display:block; font:600 11px var(--font-serif); }
 .export-menu small { display:block; margin-top:2px; color:#8d867b; font-size:8px; }
 @keyframes menu-in { from{opacity:0;transform:translateY(-5px)} }
-.workspace { height:calc(100vh - 76px); min-height:604px; display:grid; grid-template-columns:72px minmax(500px,1fr) 340px; }
-.toolrail { position:relative; z-index:10; padding:16px 10px; border-right:1px solid var(--line); background:#fbf8f1; display:flex; flex-direction:column; gap:8px; align-items:center; }
+.workspace { height:calc(100vh - 76px); height:calc(100dvh - 76px); min-height:404px; display:grid; grid-template-columns:72px minmax(500px,1fr) 340px; }
+.toolrail { position:relative; z-index:10; padding:16px 10px; overflow-y:auto; border-right:1px solid var(--line); background:#fbf8f1; display:flex; flex-direction:column; gap:8px; align-items:center; }
 .tool { position:relative; width:52px; height:52px; border-radius:13px; font-weight:700; font-size:28px; line-height:1; transition:.18s; display:grid; place-items:center; }
 .tool::after { content:attr(data-tooltip); position:absolute; z-index:20; left:calc(100% + 10px); top:50%; transform:translate(5px,-50%); width:max-content; max-width:150px; padding:7px 10px; border-radius:8px; background:var(--ink); color:white; box-shadow:0 6px 18px rgba(33,31,26,.2); font-size:11px; font-weight:650; line-height:1.25; letter-spacing:0; opacity:0; pointer-events:none; transition:opacity .14s,transform .14s; }
 .tool:hover::after,.tool:focus-visible::after { opacity:1; transform:translate(0,-50%); }
@@ -136,7 +141,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .mind-node.dragging { z-index:3; transition:box-shadow .16s,transform .16s; }
 .mind-node:active { cursor:grabbing; }
 .mind-node:hover { box-shadow:0 8px 20px rgba(48,42,31,.13); }
-.mind-node.selected { outline:3px solid rgba(237,118,95,.42); outline-offset:2px; box-shadow:0 7px 22px rgba(48,42,31,.16); }
+.mind-node.selected { outline:3px solid rgba(165,57,31,.82); outline-offset:2px; box-shadow:0 7px 22px rgba(48,42,31,.16); }
+.mind-node:focus-visible { outline:3px solid var(--focus-ring); outline-offset:3px; }
 .mind-node.search-match { box-shadow:0 0 0 5px rgba(243,216,146,.75),0 8px 20px rgba(48,42,31,.13); }
 .mind-node.level-root { width:204px; height:94px; min-height:94px; }
 .mind-node.level-branch { width:180px; height:82px; min-height:82px; }
@@ -337,7 +343,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 @keyframes toast-in { from{opacity:0;transform:translate(-50%,8px)} }
 @media (max-width:1050px) { .workspace{grid-template-columns:60px minmax(450px,1fr) 310px}.ai-panel{font-size:90%}.brand small,.saved{display:none}.map-stage{left:44%} }
 @media (max-width:760px) {
-  .app-shell{min-height:760px}.topbar{grid-template-columns:1fr auto;padding-inline:12px}.document-title{display:none}.workspace{height:calc(100vh - 76px);grid-template-columns:60px 1fr}.toolrail{padding-inline:4px;overflow-y:auto}.tool{width:50px;height:50px;font-size:27px}.tool::after{display:none}.map-stage{left:50%;transform-origin:center}.canvas-hint{display:none}.brand{font-size:17px}.brand small{display:none}.share-button{padding:0 10px}.export-button{padding:0 10px}.workspace-link{padding:0 9px}.export-menu{right:-48px}
+  .app-shell{min-height:480px}.topbar{grid-template-columns:1fr auto;padding-inline:12px}.document-title{display:none}.workspace{height:calc(100dvh - 76px);grid-template-columns:60px 1fr}.toolrail{padding-inline:4px;overflow-y:auto}.tool{width:50px;height:50px;font-size:27px}.tool::after{display:none}.map-stage{left:50%;transform-origin:center}.canvas-hint{display:none}.brand{font-size:17px}.brand small{display:none}.share-button{padding:0 10px}.export-button{padding:0 10px}.workspace-link{padding:0 9px}.export-menu{right:-48px}
   .inbox-backdrop{inset:76px 0 0 60px;z-index:22}.inbox-drawer{z-index:24;top:86px;right:10px;bottom:10px;left:70px;width:auto;min-width:0}.inbox-body{padding:13px}.inbox-composer textarea{height:96px}.seed-card{grid-template-columns:1fr}.seed-actions{justify-content:flex-end}.seed-actions .plant{margin-right:auto;min-height:40px}.seed-actions .remove{width:40px;height:40px}
   .canvas-commandbar{left:9px;right:9px;top:10px;gap:5px;flex-wrap:wrap}.view-switch{display:flex;order:0;flex:1 1 138px}.view-switch button{flex:1;padding-inline:6px}.node-search{order:2;width:auto;flex:1 1 calc(100% - 142px);margin-left:0}.layout-button{order:3}.fit-button{order:4}.fit-button,.layout-button{padding-inline:8px}.zoom-control{bottom:76px}
   .ai-backdrop{display:block;position:fixed;z-index:18;inset:76px 0 0 60px;border:0;background:rgba(33,31,26,.28)}
@@ -353,7 +359,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .status-dot.saved { background:var(--sage); box-shadow:0 0 0 3px #e7eee2; }
 .status-dot.offline { background:#d8ad44; box-shadow:0 0 0 3px #f6eecd; }
 .status-dot.conflict,.status-dot.error { background:var(--coral); box-shadow:0 0 0 3px #fbe3dd; }
-.app-shell.has-banner .workspace { height:calc(100vh - 124px); min-height:556px; }
+.app-shell.has-banner .workspace { height:calc(100vh - 124px); height:calc(100dvh - 124px); min-height:356px; }
 .sync-banner { min-height:48px; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 18px; border-bottom:1px solid #dfc783; background:#fff5d8; color:#665528; font-size:10px; }
 .sync-banner.error { border-color:#eeb9ad; background:#fbe3dd; color:#7a2f21; }
 .sync-banner span { display:flex; flex-wrap:wrap; justify-content:center; gap:4px 8px; line-height:1.4; }
@@ -420,11 +426,44 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .workspace-notice a { display:inline-block; margin-top:18px; padding:10px 14px; border-radius:9px; background:var(--ink); color:white; font-size:11px; font-weight:700; text-decoration:none; }
 
 @media (max-width:700px) {
-  .app-shell.has-banner .workspace{height:calc(100vh - 134px);min-height:626px}.sync-banner{min-height:58px;justify-content:space-between;padding-inline:12px}.sync-banner span{display:block}.sync-banner strong{display:block;margin-bottom:2px}
+  .app-shell.has-banner .workspace{height:calc(100dvh - 134px);min-height:346px}.sync-banner{min-height:58px;justify-content:space-between;padding-inline:12px}.sync-banner span{display:block}.sync-banner strong{display:block;margin-bottom:2px}
   .workspace-topbar{grid-template-columns:1fr auto;padding-inline:16px}.workspace-topbar>div{display:none}.workspace-back{font-size:10px}
   .workspace-content{width:min(100% - 24px,940px);padding-top:32px}.workspace-heading{align-items:start}.workspace-heading h1{font-size:25px}.workspace-heading p{max-width:220px;font-size:10px}.workspace-create{padding:0 12px}
   .workspace-create-form{grid-template-columns:1fr auto}.workspace-create-form label{grid-column:1/-1}.workspace-create-form input{grid-column:1/-1}
   .workspace-controls{align-items:stretch;flex-direction:column}.workspace-search{width:100%}.workspace-tabs{align-self:start}
   .map-row{align-items:flex-start;flex-wrap:wrap}.map-row-mark{width:38px;height:38px;flex-basis:38px}.map-main{padding-top:3px}.map-actions{width:100%;padding-left:51px}.map-actions button{min-height:40px;flex:1}.map-rename{grid-template-columns:1fr auto auto}
+}
+/* P0-14｜觸控收斂：每個主要操作在觸控指標下至少 44×44px。 */
+@media (pointer:coarse) {
+  .title-button,.share-button,.export-button,.workspace-link,.export-menu button { min-height:44px; }
+  .view-switch button,.fit-button,.layout-button { min-height:44px; }
+  .node-search { height:44px; }
+  .zoom-control { height:48px; }
+  .zoom-control button { width:48px; }
+  .inbox-header > button { width:44px; height:44px; }
+  .inbox-queue-heading > button,.inbox-compose-actions button { min-height:44px; padding-inline:12px; }
+  .inbox-target select { height:44px; }
+  .seed-actions button { min-height:44px; }
+  .seed-actions .remove { width:44px; height:44px; }
+  .outline-collapse { flex-basis:44px; width:44px; height:44px; }
+  .outline-actions button { min-height:44px; }
+  .outline-actions .reorder-button,.outline-actions .structure-button { width:44px; }
+  .outline-editor button { min-height:44px; padding-inline:12px; }
+  .mind-node .node-editor button { height:44px; padding-inline:14px; }
+  .ai-mode-switch button { min-height:56px; }
+  .simple-prompt button,.suggestion-actions button,.suggestion-modal footer button,.concept-explanation footer button,.transplant-modal footer button { min-height:44px; }
+  .suggestion-heading button,.ai-error button,.ai-history article button,.quick-row button { min-height:44px; padding-inline:12px; }
+  .prompt-box button { width:44px; height:44px; }
+  .sync-banner button,.conflict-actions button { min-height:44px; }
+  .workspace-tabs button,.map-actions button,.workspace-create-form button,.map-rename button,.workspace-back,.workspace-notice a,.notice-card .share-button { min-height:44px; }
+  .workspace-search { height:48px; }
+  .branch-collapse-toggle { top:-25px; min-height:44px; padding-inline:12px; }
+  /* Four 44px buttons cannot fit inside a 152px detail card, so on touch the
+     action row floats under the selected card instead of sitting in it. */
+  .mind-node:not(.selected) .node-actions { display:none; }
+  .mind-node.selected { z-index:4; }
+  .mind-node .node-actions { right:auto; bottom:-56px; left:50%; width:max-content; padding:4px; gap:6px; transform:translateX(-50%); border-color:rgba(116,111,101,.2); border-radius:28px; background:var(--warm-white); box-shadow:0 6px 18px rgba(48,42,31,.2); }
+  .mind-node.ink .node-actions { border-color:rgba(116,111,101,.2); background:var(--warm-white); }
+  .mind-node .node-actions button,.mind-node.level-detail .node-actions button { width:44px; height:44px; font-size:18px; color:var(--ink); opacity:1; }
 }
 @media (prefers-reduced-motion:reduce) { *{scroll-behavior:auto!important;transition:none!important;animation:none!important} }
