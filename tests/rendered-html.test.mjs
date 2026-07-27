@@ -65,7 +65,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript] = await Promise.all([
+  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -78,6 +78,9 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/lib/viewState.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/performance-benchmark/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../scripts/performance-benchmark.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/maps/[id]/share/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/s/[token]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/maps/[id]/route.ts", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin client wrapper around the shared studio.
@@ -229,4 +232,14 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /fetch\("\/api\/knowledge-import"/);
   assert.match(studio, /PDF／網站／影音知識匯入/);
   assert.match(studio, /影音逐字稿/);
+  assert.match(studio, /data-testid="share-access-dialog"/);
+  assert.match(studio, /唯讀/);
+  assert.match(studio, /可留言/);
+  assert.match(studio, /可編輯/);
+  assert.match(shareRoute, /eq\(mindMaps\.ownerEmail, ownerEmail\)/);
+  assert.match(shareRoute, /regenerate/);
+  assert.match(sharedAccessPage, /eq\(shareLinks\.active, true\)/);
+  assert.match(mapRoute, /sharePermissionCanEdit/);
+  assert.match(mapRoute, /status: 403/);
+  assert.match(schema, /share_links/);
 });

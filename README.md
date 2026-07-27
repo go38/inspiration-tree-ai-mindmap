@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.27.0`
+- 目前產品版本：`v0.28.0`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -48,6 +48,12 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.28.0 重點
+
+- 個人地圖新增伺服器強制的分享權限，可選唯讀、可留言或可編輯，且預設不公開。
+- 擁有者可隨時停用或重新產生分享連結；舊網址會立即失效。
+- 訪客頁面清楚標示角色；唯讀與可留言連結不能寫入，編輯連結仍受樂觀鎖保護。
 
 ## v0.27.0 重點
 

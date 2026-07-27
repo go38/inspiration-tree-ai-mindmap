@@ -1,6 +1,7 @@
 import { getDb } from "../../../db";
 import { mindMaps } from "../../../db/schema";
 import { parseCreatePayload, serializeMapData } from "../../lib/sharedMap";
+import { normalizeOwnerEmail } from "../../lib/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,8 @@ function generateMapId(): string {
 // POST /api/maps — create a shared map, returns its id.
 export async function POST(request: Request) {
   try {
+    const ownerEmail = normalizeOwnerEmail(request.headers.get("oai-authenticated-user-email"));
+    if (!ownerEmail) return Response.json({ error: "請先登入 ChatGPT 再建立雲端地圖" }, { status: 401 });
     const body = await request.json().catch(() => null);
     const parsed = parseCreatePayload(body);
     if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
@@ -32,13 +35,14 @@ export async function POST(request: Request) {
     const db = getDb();
     const id = generateMapId();
     const now = new Date().toISOString();
-    const updatedBy = request.headers.get("oai-authenticated-user-email");
+    const updatedBy = ownerEmail;
 
     await db.insert(mindMaps).values({
       id,
       title: parsed.value.title,
       data: serializeMapData(parsed.value.nodes),
       version: 1,
+      ownerEmail,
       updatedAt: now,
       updatedBy,
     });

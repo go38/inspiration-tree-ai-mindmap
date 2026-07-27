@@ -1,6 +1,6 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { getDb } from "../../../../db";
-import { mindMaps } from "../../../../db/schema";
+import { mindMaps, shareLinks } from "../../../../db/schema";
 import {
   nextVersion,
   parseMapData,
@@ -8,6 +8,7 @@ import {
   serializeMapData,
 } from "../../../lib/sharedMap";
 import { canAccessMap, normalizeOwnerEmail } from "../../../lib/workspace";
+import { isShareToken, sharePermissionCanEdit } from "../../../lib/shareAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,16 @@ function toMapResponse(row: MapRow) {
   };
 }
 
+async function activeShare(id: string, token: string | null) {
+  if (!isShareToken(token)) return null;
+  const [link] = await getDb()
+    .select()
+    .from(shareLinks)
+    .where(and(eq(shareLinks.mapId, id), eq(shareLinks.token, token), eq(shareLinks.active, true)))
+    .limit(1);
+  return link ?? null;
+}
+
 // GET /api/maps/:id — load a shared map.
 export async function GET(_request: Request, context: RouteContext) {
   try {
@@ -46,13 +57,14 @@ export async function GET(_request: Request, context: RouteContext) {
     const [row] = await db.select().from(mindMaps).where(eq(mindMaps.id, id)).limit(1);
     if (!row) return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
     const viewerEmail = normalizeOwnerEmail(_request.headers.get("oai-authenticated-user-email"));
-    if (!canAccessMap(row.ownerEmail, viewerEmail)) {
+    const link = await activeShare(id, _request.headers.get("x-share-token"));
+    if (!canAccessMap(row.ownerEmail, viewerEmail) && !link) {
       return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
     }
 
     const map = toMapResponse(row);
     if (!map) return Response.json({ error: "心智圖資料毀損" }, { status: 500 });
-    return Response.json(map);
+    return Response.json({ ...map, access: canAccessMap(row.ownerEmail, viewerEmail) ? "owner" : link?.permission });
   } catch (error) {
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
@@ -71,9 +83,12 @@ export async function PUT(request: Request, context: RouteContext) {
     const updatedBy = request.headers.get("oai-authenticated-user-email");
     const viewerEmail = normalizeOwnerEmail(updatedBy);
     const newVersion = nextVersion(parsed.value.version);
-    const ownership = viewerEmail
+    const link = await activeShare(id, request.headers.get("x-share-token"));
+    const ownerWrite = viewerEmail
       ? or(isNull(mindMaps.ownerEmail), eq(mindMaps.ownerEmail, viewerEmail))
       : isNull(mindMaps.ownerEmail);
+    const sharedWrite = link && sharePermissionCanEdit(link.permission) ? eq(mindMaps.id, id) : undefined;
+    const ownership = sharedWrite ? or(ownerWrite, sharedWrite) : ownerWrite;
 
     // Conditional write: only succeeds if the row still holds the base version
     // the client edited. RETURNING lets us detect a race atomically.
@@ -96,8 +111,11 @@ export async function PUT(request: Request, context: RouteContext) {
     // No row updated: either it doesn't exist (404) or the version moved on (409).
     const [row] = await db.select().from(mindMaps).where(eq(mindMaps.id, id)).limit(1);
     if (!row) return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
-    if (!canAccessMap(row.ownerEmail, viewerEmail)) {
+    if (!canAccessMap(row.ownerEmail, viewerEmail) && !link) {
       return Response.json({ error: "找不到這張心智圖" }, { status: 404 });
+    }
+    if (link && !sharePermissionCanEdit(link.permission) && !canAccessMap(row.ownerEmail, viewerEmail)) {
+      return Response.json({ error: "這個分享連結沒有編輯權限" }, { status: 403 });
     }
 
     const current = toMapResponse(row);

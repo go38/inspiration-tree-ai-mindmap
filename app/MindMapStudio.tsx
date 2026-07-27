@@ -84,6 +84,11 @@ import {
   type AiMapDraft,
 } from "./lib/aiMap";
 import { type KnowledgeSourceType } from "./lib/knowledgeImport";
+import {
+  sharePermissionLabel,
+  type ShareLinkSummary,
+  type SharePermission,
+} from "./lib/shareAccess";
 
 const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
   default: [
@@ -131,7 +136,15 @@ const suggestionGroups: Record<string, { title: string; note: string }[][]> = {
 
 export type Persistence =
   | { mode: "local" }
-  | { mode: "cloud"; mapId: string; version: number; title: string; personal?: boolean };
+  | {
+      mode: "cloud";
+      mapId: string;
+      version: number;
+      title: string;
+      personal?: boolean;
+      access?: "owner" | SharePermission;
+      shareToken?: string;
+    };
 
 type ServerMap = {
   id: string;
@@ -145,7 +158,7 @@ type ServerMap = {
 type SyncState = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 type ViewMode = "canvas" | "tree" | "outline";
 type AiAssistantMode = "expand" | "explain";
-type UtilityModal = "templates" | "import" | "preferences" | "generate-map" | "knowledge-import" | null;
+type UtilityModal = "templates" | "import" | "preferences" | "generate-map" | "knowledge-import" | "share-access" | null;
 type PointerPosition = { clientX: number; clientY: number };
 type AiContextMenu = { x: number; y: number; nodeId: number };
 type PinchGesture = {
@@ -197,6 +210,9 @@ export default function MindMapStudio({
   persistence: Persistence;
 }) {
   const isCloud = persistence.mode === "cloud";
+  const cloudAccess = persistence.mode === "cloud" ? persistence.access ?? "owner" : "owner";
+  const canEdit = cloudAccess === "owner" || cloudAccess === "edit";
+  const isOwner = cloudAccess === "owner";
   const [nodes, setNodes] = useState(startNodes);
   const [selectedId, setSelectedId] = useState(initialSelectedId);
   const [zoom, setZoom] = useState(100);
@@ -212,6 +228,11 @@ export default function MindMapStudio({
   const [draftRecovered, setDraftRecovered] = useState(false);
   const [conflict, setConflict] = useState<ServerMap | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [shareLink, setShareLink] = useState<ShareLinkSummary | null>(null);
+  const [sharePermission, setSharePermission] = useState<SharePermission>("view");
+  const [shareActive, setShareActive] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareError, setShareError] = useState("");
   const [documentTitle, setDocumentTitle] = useState(persistence.mode === "cloud" ? persistence.title : "我的理想生活");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -447,7 +468,7 @@ export default function MindMapStudio({
   }
 
   async function saveToCloud() {
-    if (persistence.mode !== "cloud") return;
+    if (persistence.mode !== "cloud" || !canEdit) return;
     if (syncInFlight.current) {
       syncQueued.current = true;
       return;
@@ -480,7 +501,10 @@ export default function MindMapStudio({
     try {
       const response = await fetch(`/api/maps/${persistence.mapId}`, {
         method: "PUT",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(persistence.shareToken ? { "x-share-token": persistence.shareToken } : {}),
+        },
         body: JSON.stringify({
           title: snapshot.title,
           version: snapshot.baseVersion,
@@ -531,7 +555,7 @@ export default function MindMapStudio({
       return;
     }
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-    if (persistence.mode === "cloud") {
+    if (persistence.mode === "cloud" && canEdit) {
       editRevision.current += 1;
       needsCloudSync.current = true;
       const protectedLocally = saveCloudDraft(
@@ -542,15 +566,15 @@ export default function MindMapStudio({
         version.current,
       );
       setSync(protectedLocally ? window.navigator.onLine ? "saving" : "offline" : "error");
-    } else {
+    } else if (persistence.mode === "local") {
       setSync("saving");
       setPersisted(false);
     }
     const delay = isCloud ? 800 : 400;
     saveTimer.current = window.setTimeout(() => {
-      if (persistence.mode === "cloud") {
+      if (persistence.mode === "cloud" && canEdit) {
         void saveToCloud();
-      } else {
+      } else if (persistence.mode === "local") {
         const saved = saveDraft(nodes, selectedId) && saveDocumentTitle(documentTitle);
         setPersisted(saved);
         setSync(saved ? "saved" : "error");
@@ -574,7 +598,7 @@ export default function MindMapStudio({
       }
       const savedTitle = loadDocumentTitle();
       if (savedTitle) setDocumentTitle(savedTitle);
-    } else {
+    } else if (canEdit) {
       const draft = loadCloudDraft(persistence.mapId);
       if (draft) {
         setNodes(draft.nodes);
@@ -588,7 +612,7 @@ export default function MindMapStudio({
     }
     hydrated.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canEdit]);
 
   useEffect(() => {
     setInboxSeeds(loadInboxSeeds(inboxScope));
@@ -624,7 +648,7 @@ export default function MindMapStudio({
   }, [collapsedIds, nodes]);
 
   useEffect(() => {
-    if (persistence.mode !== "cloud") return;
+    if (persistence.mode !== "cloud" || !canEdit) return;
     const protectCurrentDraft = () => {
       if (!needsCloudSync.current) return;
       saveCloudDraft(
@@ -652,7 +676,7 @@ export default function MindMapStudio({
     };
     // Event handlers read the latest editor state through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistence]);
+  }, [canEdit, persistence]);
 
   useEffect(() => () => {
     if (pointerFrame.current !== null) window.cancelAnimationFrame(pointerFrame.current);
@@ -684,6 +708,10 @@ export default function MindMapStudio({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: documentTitle || rootText, nodes }),
       });
+      if (response.status === 401) {
+        window.location.assign(`/signin-with-chatgpt?return_to=${encodeURIComponent("/")}`);
+        return;
+      }
       if (!response.ok) {
         flashToast("建立失敗，請稍後再試", 2400);
         return;
@@ -694,6 +722,54 @@ export default function MindMapStudio({
       flashToast("建立失敗，請稍後再試", 2400);
     } finally {
       setSharing(false);
+    }
+  }
+
+  async function openShareAccess() {
+    if (persistence.mode !== "cloud" || !isOwner) return;
+    setShareLoading(true);
+    setShareError("");
+    setUtilityModal("share-access");
+    try {
+      const response = await fetch(`/api/maps/${persistence.mapId}/share`);
+      const data = await response.json() as { share?: ShareLinkSummary | null; error?: string };
+      if (!response.ok) {
+        setShareError(data.error || "無法讀取分享設定");
+        return;
+      }
+      setShareLink(data.share ?? null);
+      setSharePermission(data.share?.permission ?? "view");
+      setShareActive(data.share?.active ?? false);
+    } catch {
+      setShareError("網路連線失敗，請稍後再試。");
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
+  async function updateShareAccess(regenerate = false) {
+    if (persistence.mode !== "cloud" || !isOwner || shareLoading) return;
+    setShareLoading(true);
+    setShareError("");
+    try {
+      const response = await fetch(`/api/maps/${persistence.mapId}/share`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: shareActive, permission: sharePermission, regenerate }),
+      });
+      const data = await response.json() as { share?: ShareLinkSummary; error?: string };
+      if (!response.ok || !data.share) {
+        setShareError(data.error || "無法更新分享設定");
+        return;
+      }
+      setShareLink(data.share);
+      setShareActive(data.share.active);
+      setSharePermission(data.share.permission);
+      flashToast(data.share.active ? `分享已開啟：${sharePermissionLabel(data.share.permission)}` : "分享已關閉");
+    } catch {
+      setShareError("網路連線失敗，分享設定未變更。");
+    } finally {
+      setShareLoading(false);
     }
   }
 
@@ -1282,6 +1358,7 @@ export default function MindMapStudio({
   }
 
   function beginTitleEdit() {
+    if (!canEdit) return;
     setTitleDraft(documentTitle);
     setTitleEditing(true);
   }
@@ -1879,6 +1956,7 @@ export default function MindMapStudio({
         return;
       }
       const isTextEditing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      if (!canEdit && !isTextEditing) return;
       if (!isTextEditing) {
         const historyShortcut = historyShortcutForKey(event);
         if (historyShortcut) {
@@ -1915,17 +1993,17 @@ export default function MindMapStudio({
     return () => window.removeEventListener("keydown", onKeyDown);
     // Keyboard actions intentionally follow the latest selected node and map.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId, nodes, selectedId, transplantingId, viewMode]);
+  }, [canEdit, editingId, nodes, selectedId, transplantingId, viewMode]);
 
   const statusLabel = isCloud
-    ? sync === "idle" && persistence.personal ? "個人地圖" : SYNC_LABEL[sync]
+    ? !isOwner ? sharePermissionLabel(cloudAccess as SharePermission) : sync === "idle" && persistence.personal ? "個人地圖" : SYNC_LABEL[sync]
     : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
 
   return (
-    <main className={`app-shell ${preferences.reducedMotion ? "reduce-motion" : ""} ${conflict || (isCloud && (sync === "offline" || sync === "error")) ? "has-banner" : ""}`}>
+    <main className={`app-shell ${!isOwner ? "has-access-banner" : ""} ${!canEdit ? "read-only" : ""} ${preferences.reducedMotion ? "reduce-motion" : ""} ${conflict || (isCloud && (sync === "offline" || sync === "error")) ? "has-banner" : ""}`}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
-        <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} aria-label={`修改標題：${documentTitle}`}>{documentTitle}<span aria-hidden="true">✎</span></button>} <span className="saved">{statusLabel}</span></div>
+        <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} disabled={!canEdit} aria-label={canEdit ? `修改標題：${documentTitle}` : `心智圖標題：${documentTitle}`}>{documentTitle}{canEdit && <span aria-hidden="true">✎</span>}</button>} <span className="saved">{statusLabel}</span></div>
         <div className="top-actions">
           <Link className="workspace-link" href="/maps">我的地圖</Link>
           <div className="export-wrap">
@@ -1937,10 +2015,12 @@ export default function MindMapStudio({
               <button role="menuitem" onClick={exportPng}><span className="file-icon png">PNG</span><span><strong>PNG 圖形檔</strong><small>高解析度完整心智圖</small></span></button>
             </div>}
           </div>
-          {isCloud ? (
-            <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); flashToast(persistence.personal ? "地圖網址已複製" : "共享連結已複製"); }}>{persistence.personal ? "複製網址" : "複製連結"} <span>↗</span></button>
+          {isCloud ? isOwner && persistence.personal ? (
+            <button className="share-button" onClick={() => void openShareAccess()}>分享設定 <span>↗</span></button>
           ) : (
-            <button className="share-button" onClick={createSharedMap} disabled={sharing}>{sharing ? "建立中…" : "建立共享連結"} <span>↗</span></button>
+            <button className="share-button" onClick={() => { navigator.clipboard?.writeText(location.href); flashToast("共享連結已複製"); }}>複製連結 <span>↗</span></button>
+          ) : (
+            <button className="share-button" onClick={createSharedMap} disabled={sharing}>{sharing ? "建立中…" : "儲存至雲端"} <span>↗</span></button>
           )}
         </div>
       </header>
@@ -1967,8 +2047,9 @@ export default function MindMapStudio({
         </div>
       )}
 
+      {!isOwner && <div className={`access-banner ${cloudAccess}`} role="status"><strong>{sharePermissionLabel(cloudAccess as SharePermission)}</strong><span>{cloudAccess === "edit" ? "你可以修改這張地圖，所有變更會同步給其他訪客。" : cloudAccess === "comment" ? "留言功能將於下一階段開放；目前可瀏覽與匯出。" : "你可以瀏覽、搜尋與匯出，但不能修改內容。"}</span></div>}
       <section className="workspace">
-        <nav className="toolrail" aria-label="心智圖工具">
+        <nav className="toolrail" aria-label="心智圖工具" aria-disabled={!canEdit}>
           <button className="tool" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點">
             <span aria-hidden="true">＋</span>
           </button>
@@ -2415,6 +2496,37 @@ export default function MindMapStudio({
             <button type="button" onClick={() => setUtilityModal(null)}>取消</button>
             <button type="button" onClick={() => previewImport()}>產生預覽</button>
             <button type="button" className="primary" onClick={applyImport} disabled={!importPreview?.ok}>匯入並取代</button>
+          </footer>
+        </section>
+      </div>}
+      {utilityModal === "share-access" && <div className="modal-backdrop" onMouseDown={() => !shareLoading && setUtilityModal(null)}>
+        <section className="utility-modal share-access-modal" role="dialog" aria-modal="true" aria-labelledby="share-access-title" data-testid="share-access-dialog" onMouseDown={(event) => event.stopPropagation()}>
+          <header className="share-access-header">
+            <div><span className="modal-kicker">CONTROLLED SHARING</span><h2 id="share-access-title">分享權限</h2><p>預設不公開；只有持有啟用連結的人能依指定角色存取。</p></div>
+            <button type="button" onClick={() => setUtilityModal(null)} aria-label="關閉分享設定" disabled={shareLoading}>×</button>
+          </header>
+          <label className="share-toggle">
+            <span><strong>啟用分享連結</strong><small>{shareActive ? "連結目前可以使用" : "其他人目前無法透過連結存取"}</small></span>
+            <input type="checkbox" checked={shareActive} onChange={(event) => setShareActive(event.target.checked)} disabled={shareLoading} />
+          </label>
+          <fieldset className="share-role-options" disabled={shareLoading || !shareActive}>
+            <legend>訪客權限</legend>
+            {([
+              ["view", "唯讀", "可瀏覽、搜尋與匯出，不可修改"],
+              ["comment", "可留言", "保留留言角色；P2-03 開放討論"],
+              ["edit", "可編輯", "可修改節點與標題，變更同步儲存"],
+            ] as [SharePermission, string, string][]).map(([permission, label, detail]) => <label key={permission} className={sharePermission === permission ? "selected" : ""}><input type="radio" name="share-permission" checked={sharePermission === permission} onChange={() => setSharePermission(permission)} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}
+          </fieldset>
+          {shareLink && <div className={`share-link-box ${shareLink.active ? "active" : ""}`}>
+            <label htmlFor="share-link-value">分享網址</label>
+            <div><input id="share-link-value" readOnly value={`${location.origin}${shareLink.url}`} /><button type="button" onClick={() => { void navigator.clipboard?.writeText(`${location.origin}${shareLink.url}`); flashToast("共享連結已複製"); }} disabled={!shareLink.active}>複製</button></div>
+          </div>}
+          {shareError && <div className="ai-map-error" role="alert">{shareError}</div>}
+          <div className="share-security-note"><span aria-hidden="true">◆</span><p><strong>權限由伺服器強制執行</strong>關閉分享後，既有網址會立即失效。重新產生連結則會永久淘汰舊網址。</p></div>
+          <footer>
+            {shareLink && <button type="button" onClick={() => void updateShareAccess(true)} disabled={shareLoading}>重新產生連結</button>}
+            <button type="button" onClick={() => setUtilityModal(null)} disabled={shareLoading}>取消</button>
+            <button type="button" className="primary" onClick={() => void updateShareAccess()} disabled={shareLoading}>{shareLoading ? "儲存中…" : "儲存分享設定"}</button>
           </footer>
         </section>
       </div>}

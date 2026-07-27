@@ -15,6 +15,13 @@
       "when": 1784887436853,
       "tag": "0001_calm_tempest",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785110944184,
+      "tag": "0002_smart_dark_phoenix",
+      "breakpoints": true
     }
   ]
 }
