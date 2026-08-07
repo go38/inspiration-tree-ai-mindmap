@@ -219,6 +219,7 @@ export default function MindMapStudio({
   const [prompt, setPrompt] = useState("");
   const [toast, setToast] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [history, setHistory] = useState<HistoryState[]>([]);
   const [future, setFuture] = useState<HistoryState[]>([]);
@@ -2050,51 +2051,46 @@ export default function MindMapStudio({
       {!isOwner && <div className={`access-banner ${cloudAccess}`} role="status"><strong>{sharePermissionLabel(cloudAccess as SharePermission)}</strong><span>{cloudAccess === "edit" ? "你可以修改這張地圖，所有變更會同步給其他訪客。" : cloudAccess === "comment" ? "留言功能將於下一階段開放；目前可瀏覽與匯出。" : "你可以瀏覽、搜尋與匯出，但不能修改內容。"}</span></div>}
       <section className="workspace">
         <nav className="toolrail" aria-label="心智圖工具" aria-disabled={!canEdit}>
-          <button className="tool" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點">
-            <span aria-hidden="true">＋</span>
-          </button>
-          <button className="tool danger" onClick={removeSelectedNode} aria-label="移除目前節點" data-tooltip="移除節點" disabled={selected.parent === null}>
-            <span aria-hidden="true">−</span>
-          </button>
-          <button className="tool" onClick={duplicateSelectedBranch} aria-label="複製目前分支及完整子樹" data-tooltip="複製分支" disabled={selected.parent === null}>
-            <span aria-hidden="true">⧉</span>
-          </button>
-          <button className="tool" onClick={() => setUtilityModal("templates")} aria-label="開啟分支範本" data-tooltip="分支範本">
-            <span aria-hidden="true">▦</span>
-          </button>
-          <button className="tool" onClick={() => { setImportPreview(null); setUtilityModal("import"); }} aria-label="匯入 JSON 或 Markdown" data-tooltip="匯入內容">
-            <span aria-hidden="true">⇩</span>
-          </button>
-          <button className="tool ai-map-tool" onClick={openAiMapGenerator} aria-label="使用 AI 自動產生心智圖" data-tooltip="AI 自動產圖">
-            <span aria-hidden="true">✣</span>
-          </button>
-          <button className="tool knowledge-tool" onClick={openKnowledgeImport} aria-label="匯入 PDF、網站或影音逐字稿" data-tooltip="知識匯入">
-            <span aria-hidden="true">◫</span>
-          </button>
-          <span className="tool-divider" aria-hidden="true" />
-          <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣">
-            <span aria-hidden="true">⌑</span>
-            {inboxSeeds.length > 0 && <small className="inbox-badge">{Math.min(inboxSeeds.length, 99)}</small>}
-          </button>
-          <span className="tool-divider" aria-hidden="true" />
-          <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!history.length}>
-            <span aria-hidden="true">↶</span>
-          </button>
-          <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做 · ⇧⌘Z/Ctrl Y" disabled={!future.length}>
-            <span aria-hidden="true">↷</span>
-          </button>
-          <span className="tool-divider" aria-hidden="true" />
-          <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => selectViewMode(viewMode === "outline" ? "canvas" : "outline")} aria-label={viewMode === "outline" ? "切換至心智圖模式" : "切換至大綱模式"} data-tooltip={viewMode === "outline" ? "切換至畫布" : "切換至大綱"}>
-            <span aria-hidden="true">≡</span>
-          </button>
-          <button className="tool" onClick={openPreferences} aria-label="開啟使用者偏好" data-tooltip="使用者偏好">
-            <span aria-hidden="true">⚙</span>
-          </button>
-          {!isCloud && <>
-            <span className="tool-divider" aria-hidden="true" />
-            <button className="tool" onClick={resetToSample} aria-label="清除草稿並重設為預設範例" data-tooltip="重設範例">
-              <span aria-hidden="true">⟳</span>
+          <div className="toolrail-group">
+            <button className="tool tool-primary" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點">
+              <span aria-hidden="true">＋</span>
             </button>
+            <button className="tool ai-map-tool" onClick={openAiMapGenerator} aria-label="使用 AI 自動產生心智圖" data-tooltip="AI 自動產圖">
+              <span aria-hidden="true">✣</span>
+            </button>
+            <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣">
+              <span aria-hidden="true">⌑</span>
+              {inboxSeeds.length > 0 && <small className="inbox-badge">{Math.min(inboxSeeds.length, 99)}</small>}
+            </button>
+          </div>
+          <div className="toolrail-group toolrail-bottom">
+            <div className="history-tools" aria-label="編輯紀錄">
+              <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!history.length}><span aria-hidden="true">↶</span></button>
+              <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做 · ⇧⌘Z/Ctrl Y" disabled={!future.length}><span aria-hidden="true">↷</span></button>
+            </div>
+            <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => selectViewMode(viewMode === "outline" ? "canvas" : "outline")} aria-label={viewMode === "outline" ? "切換至心智圖模式" : "切換至大綱模式"} data-tooltip={viewMode === "outline" ? "切換至畫布" : "切換至大綱"}>
+              <span aria-hidden="true">≡</span>
+            </button>
+            <button className={`tool ${toolMenuOpen ? "active" : ""}`} onClick={() => setToolMenuOpen((open) => !open)} aria-label="開啟更多工具" aria-haspopup="menu" aria-expanded={toolMenuOpen} data-tooltip="更多工具">
+              <span aria-hidden="true">•••</span>
+            </button>
+          </div>
+          {toolMenuOpen && <>
+            <button className="tool-menu-backdrop" aria-label="關閉更多工具" onClick={() => setToolMenuOpen(false)} />
+            <div className="tool-menu" role="menu" aria-label="更多工具">
+              <header><strong>更多工具</strong><span>整理、匯入與設定</span></header>
+              <div className="tool-menu-section">
+                <button role="menuitem" onClick={() => { duplicateSelectedBranch(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>⧉</span><strong>複製分支</strong></button>
+                <button role="menuitem" className="danger" onClick={() => { removeSelectedNode(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>−</span><strong>移除節點</strong></button>
+                <button role="menuitem" onClick={() => { setUtilityModal("templates"); setToolMenuOpen(false); }}><span>▦</span><strong>分支範本</strong></button>
+              </div>
+              <div className="tool-menu-section">
+                <button role="menuitem" onClick={() => { setImportPreview(null); setUtilityModal("import"); setToolMenuOpen(false); }}><span>⇩</span><strong>匯入內容</strong></button>
+                <button role="menuitem" onClick={() => { openKnowledgeImport(); setToolMenuOpen(false); }}><span>◫</span><strong>知識匯入</strong></button>
+                <button role="menuitem" onClick={() => { openPreferences(); setToolMenuOpen(false); }}><span>⚙</span><strong>使用者偏好</strong></button>
+                {!isCloud && <button role="menuitem" onClick={() => { resetToSample(); setToolMenuOpen(false); }}><span>⟳</span><strong>重設範例</strong></button>}
+              </div>
+            </div>
           </>}
         </nav>
 
