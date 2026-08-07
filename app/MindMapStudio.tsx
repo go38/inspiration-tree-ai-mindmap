@@ -1327,6 +1327,11 @@ export default function MindMapStudio({
     });
   }
 
+  function cycleViewMode() {
+    const nextMode: ViewMode = viewMode === "canvas" ? "tree" : viewMode === "tree" ? "outline" : "canvas";
+    selectViewMode(nextMode);
+  }
+
   function applyAutoLayout(branchRootId?: number) {
     if (viewMode === "tree") {
       const resetIds = branchRootId === undefined ? null : collectSubtreeIds(nodes, branchRootId);
@@ -1999,6 +2004,7 @@ export default function MindMapStudio({
   const statusLabel = isCloud
     ? !isOwner ? sharePermissionLabel(cloudAccess as SharePermission) : sync === "idle" && persistence.personal ? "個人地圖" : SYNC_LABEL[sync]
     : sync === "saving" ? "儲存中…" : sync === "error" ? "儲存失敗" : persisted ? "已自動儲存" : "互動草稿";
+  const nextViewLabel = viewMode === "canvas" ? "樹狀" : viewMode === "tree" ? "大綱" : "心智圖";
 
   return (
     <main className={`app-shell ${!isOwner ? "has-access-banner" : ""} ${!canEdit ? "read-only" : ""} ${preferences.reducedMotion ? "reduce-motion" : ""} ${conflict || (isCloud && (sync === "offline" || sync === "error")) ? "has-banner" : ""}`}>
@@ -2068,7 +2074,7 @@ export default function MindMapStudio({
               <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!history.length}><span aria-hidden="true">↶</span></button>
               <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做 · ⇧⌘Z/Ctrl Y" disabled={!future.length}><span aria-hidden="true">↷</span></button>
             </div>
-            <button className={`tool ${viewMode === "outline" ? "active" : ""}`} onClick={() => selectViewMode(viewMode === "outline" ? "canvas" : "outline")} aria-label={viewMode === "outline" ? "切換至心智圖模式" : "切換至大綱模式"} data-tooltip={viewMode === "outline" ? "切換至畫布" : "切換至大綱"}>
+            <button className={`tool ${viewMode !== "canvas" ? "active" : ""}`} onClick={cycleViewMode} aria-label={`切換至${nextViewLabel}模式`} data-tooltip={`下一個：${nextViewLabel}`}>
               <span aria-hidden="true">≡</span>
             </button>
             <button className={`tool ${toolMenuOpen ? "active" : ""}`} onClick={() => setToolMenuOpen((open) => !open)} aria-label="開啟更多工具" aria-haspopup="menu" aria-expanded={toolMenuOpen} data-tooltip="更多工具">

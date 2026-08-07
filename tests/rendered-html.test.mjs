@@ -132,6 +132,9 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /saveMapViewState/);
   assert.match(viewState, /inspiration-tree:view-state:v1:/);
   assert.match(studio, /data-tooltip="新增節點"/);
+  assert.match(studio, /viewMode === "canvas" \? "tree" : viewMode === "tree" \? "outline" : "canvas"/, "the rail view button cycles canvas, tree, and outline in order");
+  assert.match(studio, /onClick=\{cycleViewMode\}/);
+  assert.match(studio, /aria-label=\{`切換至\$\{nextViewLabel\}模式`\}/);
   assert.doesNotMatch(studio, /<span aria-hidden="true">＋<\/span><small>新增<\/small>/);
   assert.match(studio, /addAiSuggestion/);
   assert.match(studio, /addAllAiSuggestions/);
