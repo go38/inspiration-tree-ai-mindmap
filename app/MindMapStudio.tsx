@@ -2075,24 +2075,25 @@ export default function MindMapStudio({
               <span aria-hidden="true">•••</span>
             </button>
           </div>
-          {toolMenuOpen && <>
-            <button className="tool-menu-backdrop" aria-label="關閉更多工具" onClick={() => setToolMenuOpen(false)} />
-            <div className="tool-menu" role="menu" aria-label="更多工具">
-              <header><strong>更多工具</strong><span>整理、匯入與設定</span></header>
-              <div className="tool-menu-section">
-                <button role="menuitem" onClick={() => { duplicateSelectedBranch(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>⧉</span><strong>複製分支</strong></button>
-                <button role="menuitem" className="danger" onClick={() => { removeSelectedNode(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>−</span><strong>移除節點</strong></button>
-                <button role="menuitem" onClick={() => { setUtilityModal("templates"); setToolMenuOpen(false); }}><span>▦</span><strong>分支範本</strong></button>
-              </div>
-              <div className="tool-menu-section">
-                <button role="menuitem" onClick={() => { setImportPreview(null); setUtilityModal("import"); setToolMenuOpen(false); }}><span>⇩</span><strong>匯入內容</strong></button>
-                <button role="menuitem" onClick={() => { openKnowledgeImport(); setToolMenuOpen(false); }}><span>◫</span><strong>知識匯入</strong></button>
-                <button role="menuitem" onClick={() => { openPreferences(); setToolMenuOpen(false); }}><span>⚙</span><strong>使用者偏好</strong></button>
-                {!isCloud && <button role="menuitem" onClick={() => { resetToSample(); setToolMenuOpen(false); }}><span>⟳</span><strong>重設範例</strong></button>}
-              </div>
-            </div>
-          </>}
         </nav>
+
+        {toolMenuOpen && <>
+          <button className="tool-menu-backdrop" aria-label="關閉更多工具" onClick={() => setToolMenuOpen(false)} />
+          <div className="tool-menu" role="menu" aria-label="更多工具">
+            <header><strong>更多工具</strong><span>整理、匯入與設定</span></header>
+            <div className="tool-menu-section">
+              <button role="menuitem" onClick={() => { duplicateSelectedBranch(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>⧉</span><strong>複製分支</strong></button>
+              <button role="menuitem" className="danger" onClick={() => { removeSelectedNode(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>−</span><strong>移除節點</strong></button>
+              <button role="menuitem" onClick={() => { setUtilityModal("templates"); setToolMenuOpen(false); }}><span>▦</span><strong>分支範本</strong></button>
+            </div>
+            <div className="tool-menu-section">
+              <button role="menuitem" onClick={() => { setImportPreview(null); setUtilityModal("import"); setToolMenuOpen(false); }}><span>⇩</span><strong>匯入內容</strong></button>
+              <button role="menuitem" onClick={() => { openKnowledgeImport(); setToolMenuOpen(false); }}><span>◫</span><strong>知識匯入</strong></button>
+              <button role="menuitem" onClick={() => { openPreferences(); setToolMenuOpen(false); }}><span>⚙</span><strong>使用者偏好</strong></button>
+              {!isCloud && <button role="menuitem" onClick={() => { resetToSample(); setToolMenuOpen(false); }}><span>⟳</span><strong>重設範例</strong></button>}
+            </div>
+          </div>
+        </>}
 
         {inboxOpen && <button className="inbox-backdrop" aria-label="關閉靈感收件匣" onClick={() => setInboxOpen(false)} />}
         <aside className={`inbox-drawer ${inboxOpen ? "open" : ""}`} aria-hidden={!inboxOpen} inert={!inboxOpen} data-testid="inspiration-inbox">

@@ -172,6 +172,10 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(globals, /\.app-shell\s*\{[^}]*height:100dvh;\s*min-height:480px/);
   assert.match(globals, /\.workspace\s*\{[^}]*height:calc\(100dvh - 76px\);\s*min-height:404px/);
   assert.match(globals, /\.toolrail\s*\{[^}]*overflow-y:auto/);
+  const toolrailStart = studio.indexOf('<nav className="toolrail"');
+  const toolrailEnd = studio.indexOf("</nav>", toolrailStart);
+  const moreToolsPanel = studio.indexOf("{toolMenuOpen && <>");
+  assert.ok(toolrailStart >= 0 && toolrailEnd > toolrailStart && moreToolsPanel > toolrailEnd, "the fixed more-tools panel must stay outside the scrollable toolrail so Safari does not clip it");
   // 1280x800 at 200% zoom is 640x400 CSS px, so nothing may demand more.
   for (const shellMinimum of globals.match(/\.app-shell[^{]*\{[^}]*min-height:(\d+)px/g) ?? []) {
     assert.ok(Number(shellMinimum.match(/min-height:(\d+)px/)[1]) <= 480, `${shellMinimum} is taller than a 200%-zoomed viewport`);
