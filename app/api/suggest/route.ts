@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import { buildAiInput, extractAiResponseText, parseAiExplanationResponse, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
+import { buildAiInput, parseAiExplanationResponse, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
+import { readAiConfig, requestClaudeJson } from "../../lib/aiProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -66,44 +67,30 @@ export async function POST(request: Request) {
 
   const workerEnv = env as unknown as Record<string, string | undefined>;
   const nodeEnv = typeof process !== "undefined" ? process.env : {};
-  const apiKey = workerEnv.OPENAI_API_KEY || nodeEnv.OPENAI_API_KEY;
-  if (!apiKey) return Response.json({ error: "AI 尚未啟用，管理者需先設定 OpenAI API 金鑰。", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+  const config = readAiConfig(workerEnv, nodeEnv);
+  if (!config) return Response.json({ error: "AI 尚未啟用，管理者需先設定 API 金鑰。", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25_000);
   try {
     const explaining = parsed.mode === "explain";
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: workerEnv.OPENAI_MODEL || nodeEnv.OPENAI_MODEL || "gpt-5.6-luna",
-        instructions: explaining
-          ? "你是協助使用者理解心智圖概念的解讀助手。只根據提供的節點脈絡解釋，使用白話繁體中文，清楚區分已知內容與合理推測。"
-          : "你是協助使用者整理心智圖的擴寫助手。輸出必須安全、具體、彼此不重複，不得捏造使用者未提供的事實。",
-        input: buildAiInput(parsed),
-        reasoning: { effort: "low" },
-        max_output_tokens: 1400,
-        text: {
-          verbosity: "low",
-          format: {
-            type: "json_schema",
-            name: explaining ? "mind_map_explanation" : "mind_map_suggestions",
-            strict: true,
-            schema: explaining ? EXPLANATION_RESPONSE_SCHEMA : SUGGESTION_RESPONSE_SCHEMA,
-          },
-        },
-      }),
+    const result = await requestClaudeJson({
+      config,
+      system: explaining
+        ? "你是協助使用者理解心智圖概念的解讀助手。只根據提供的節點脈絡解釋，使用白話繁體中文，清楚區分已知內容與合理推測。"
+        : "你是協助使用者整理心智圖的擴寫助手。輸出必須安全、具體、彼此不重複，不得捏造使用者未提供的事實。",
+      content: [{ type: "text", text: buildAiInput(parsed) }],
+      schema: explaining ? EXPLANATION_RESPONSE_SCHEMA : SUGGESTION_RESPONSE_SCHEMA,
+      schemaName: explaining ? "mind_map_explanation" : "mind_map_suggestions",
+      maxTokens: 2048,
       signal: controller.signal,
     });
-    if (!response.ok) {
-      const status = response.status === 429 ? 429 : response.status === 401 ? 503 : 502;
-      const message = response.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : response.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 服務暫時無法回應，請稍後重試。";
+    if (!result.ok) {
+      const status = result.status === 429 ? 429 : result.status === 401 ? 503 : 502;
+      const message = result.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : result.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 服務暫時無法回應，請稍後重試。";
       return Response.json({ error: message }, { status });
     }
-    const result = await response.json() as unknown;
-    const outputText = extractAiResponseText(result);
-    const json = outputText ? JSON.parse(outputText) : null;
+    const json = JSON.parse(result.text);
     const allowedNodeIds = new Set(parsed.nodes.map((node) => node.id));
     const validated = explaining
       ? parseAiExplanationResponse(json, allowedNodeIds)

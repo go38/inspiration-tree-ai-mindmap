@@ -81,7 +81,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute, createMapRoute] = await Promise.all([
+  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute, createMapRoute, aiProvider, generateMapRoute, knowledgeImportRoute] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -98,6 +98,9 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/s/[token]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/maps/[id]/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/maps/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/aiProvider.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/generate-map/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/knowledge-import/route.ts", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin server wrapper around the shared studio: it reads
@@ -251,7 +254,17 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(schema, /mind_maps_owner_updated_idx/);
   assert.match(suggestRoute, /EXPLANATION_RESPONSE_SCHEMA/);
   assert.match(suggestRoute, /parseAiExplanationResponse/);
-  assert.match(suggestRoute, /gpt-5\.6-luna/);
+  // Every AI route goes through the shared Anthropic client — no route may
+  // rebuild its own request or reach OpenAI directly.
+  for (const route of [suggestRoute, generateMapRoute, knowledgeImportRoute]) {
+    assert.match(route, /requestClaudeJson\(/);
+    assert.doesNotMatch(route, /api\.openai\.com/);
+    assert.doesNotMatch(route, /max_output_tokens|instructions:|reasoning:/);
+  }
+  // Claude Haiku 4.5 rejects output_config.effort; sending the key would 400.
+  // Matches an object key, so the comment explaining the omission still passes.
+  assert.doesNotMatch(aiProvider, /effort\s*:/);
+  assert.match(aiProvider, /"anthropic-version"/);
   assert.match(studio, /onContextMenu=\{\(event\) => openAiContextMenu\(event, node\)\}/);
   assert.match(studio, /data-testid="ai-context-menu"/);
   assert.match(studio, /runAiAssistantCommand\(command\.id\)/);

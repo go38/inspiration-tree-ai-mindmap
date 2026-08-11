@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { AI_MAP_RESPONSE_SCHEMA, parseAiMapDraft } from "../../lib/aiMap";
-import { extractAiResponseText } from "../../lib/ai";
+import { readAiConfig, requestClaudeJson } from "../../lib/aiProvider";
 import { extractWebsiteText, parseKnowledgeImportRequest } from "../../lib/knowledgeImport";
 
 export const dynamic = "force-dynamic";
@@ -10,8 +10,8 @@ export async function POST(request: Request) {
   if (!parsed) return Response.json({ error: "知識來源格式不正確；請確認網址、PDF 或逐字稿內容。" }, { status: 400 });
   const workerEnv = env as unknown as Record<string, string | undefined>;
   const nodeEnv = typeof process !== "undefined" ? process.env : {};
-  const apiKey = workerEnv.OPENAI_API_KEY || nodeEnv.OPENAI_API_KEY;
-  if (!apiKey) return Response.json({ error: "AI 尚未啟用，管理者需先設定 OpenAI API 金鑰。", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+  const config = readAiConfig(workerEnv, nodeEnv);
+  if (!config) return Response.json({ error: "AI 尚未啟用，管理者需先設定 API 金鑰。", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
   let sourceText = parsed.content;
   if (parsed.sourceType === "website") {
@@ -43,38 +43,39 @@ export async function POST(request: Request) {
     "保留重要定義、論點、步驟、例子與限制；用 note 提供足以理解的來源摘要。",
     "產生 8 至 30 個節點；只能有一個中心節點，父節點必須在子節點之前。",
   ].join("\n");
-  const content: Record<string, unknown>[] = [{ type: "input_text", text: parsed.sourceType === "pdf" ? instruction : `${instruction}\n\n來源正文：\n${sourceText}` }];
+  // Anthropic expects the document block before the text that refers to it, and
+  // rejects base64 containing newlines.
+  const content: Record<string, unknown>[] = [];
   if (parsed.sourceType === "pdf") {
     content.push({
-      type: "input_file",
-      filename: parsed.filename,
-      file_data: parsed.fileData.slice("data:application/pdf;base64,".length),
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: parsed.fileData.slice("data:application/pdf;base64,".length).replace(/\s+/g, ""),
+      },
     });
   }
+  content.push({ type: "text", text: parsed.sourceType === "pdf" ? instruction : `${instruction}\n\n來源正文：\n${sourceText}` });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: workerEnv.OPENAI_MODEL || nodeEnv.OPENAI_MODEL || "gpt-5.6-luna",
-        instructions: "你是知識整理助手。只根據提供的文件、網頁正文或逐字稿建立階層化心智圖。",
-        input: [{ role: "user", content }],
-        reasoning: { effort: "low" },
-        max_output_tokens: 3600,
-        text: { verbosity: "low", format: { type: "json_schema", name: "knowledge_mind_map", strict: true, schema: AI_MAP_RESPONSE_SCHEMA } },
-      }),
+    const result = await requestClaudeJson({
+      config,
+      system: "你是知識整理助手。只根據提供的文件、網頁正文或逐字稿建立階層化心智圖。",
+      content,
+      schema: AI_MAP_RESPONSE_SCHEMA,
+      schemaName: "knowledge_mind_map",
+      maxTokens: 3600,
       signal: controller.signal,
     });
-    if (!response.ok) {
-      const status = response.status === 429 ? 429 : response.status === 401 ? 503 : 502;
-      const message = response.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : response.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 暫時無法整理此來源，請稍後重試。";
+    if (!result.ok) {
+      const status = result.status === 429 ? 429 : result.status === 401 ? 503 : 502;
+      const message = result.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : result.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 暫時無法整理此來源，請稍後重試。";
       return Response.json({ error: message }, { status });
     }
-    const outputText = extractAiResponseText(await response.json() as unknown);
-    const draft = parseAiMapDraft(outputText ? JSON.parse(outputText) : null, 30);
+    const draft = parseAiMapDraft(JSON.parse(result.text), 30);
     if (!draft) return Response.json({ error: "AI 整理出的階層不完整，請縮小來源範圍後重試。" }, { status: 502 });
     return Response.json({ draft, source: { type: parsed.sourceType, label: sourceLabel } });
   } catch (error) {

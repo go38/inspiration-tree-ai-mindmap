@@ -6,7 +6,17 @@
 
 ### Changed
 
-- 建立雲端地圖不再強制要求 ChatGPT 登入。有身分 header 的平台（Sites）維持既有的擁有者綁定；沒有的部署環境則建立無擁有者地圖，沿用 v0.19.1 的分享模型（憑不可猜測的網址存取）。分享權限與個人地圖工作區仍需登入，因為兩者本質上都需要擁有者。
+- AI 改用 Anthropic Messages API，預設經 Zeabur AI Hub 呼叫 `claude-haiku-4-5`。三個 AI 路由（擴寫／解讀、AI 自動產圖、知識匯入）共用 `app/lib/aiProvider.ts`，端點與模型改由 `AI_BASE_URL`／`AI_MODEL` 設定。
+- 環境變數改為 `AI_API_KEY`／`AI_MODEL`／`AI_BASE_URL`；`OPENAI_API_KEY` 仍作為金鑰的後備名稱，`OPENAI_MODEL` 則刻意不再讀取——沿用舊的 OpenAI 模型名稱會讓每一次呼叫都失敗。
+- 知識匯入的 PDF 由 Responses API 的 `input_file` 改為 Anthropic 的 `document` 內容塊，並置於文字之前。
+
+### Known limitations
+
+- Anthropic 結構化輸出不支援 `minItems`／`maxItems`，送出前會由 `toAnthropicSchema()` 剝除。這些上限多數在伺服器端已有等效驗證（`parseAiResponse` 的 6 筆上限、`parseAiExplanationResponse` 的 2–4 個重點、`parseAiMapDraft` 的 3–40 個節點），**唯一失去硬保證的是「擴寫建議至少 3 個」**：PRD AI-03 的下限自此僅由提示詞要求，模型少給時不會被擋下。維持既有寬容行為是刻意的——把 2 筆建議變成錯誤畫面比顯示 2 筆更糟。
+
+### Fixed
+
+- 唯讀分享地圖的工具列改用原生 `disabled` 表達停用狀態。有身分 header 的平台（Sites）維持既有的擁有者綁定；沒有的部署環境則建立無擁有者地圖，沿用 v0.19.1 的分享模型（憑不可猜測的網址存取）。分享權限與個人地圖工作區仍需登入，因為兩者本質上都需要擁有者。
 
 ### Fixed
 

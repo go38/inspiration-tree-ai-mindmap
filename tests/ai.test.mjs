@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AI_ASSISTANT_COMMANDS, buildAiInput, extractAiResponseText, getAiAssistantCommand, parseAiExplanationResponse, parseAiHistory, parseAiResponse, parseAiSuggestRequest } from "../app/lib/ai.ts";
+import { AI_ASSISTANT_COMMANDS, buildAiInput, getAiAssistantCommand, parseAiExplanationResponse, parseAiHistory, parseAiResponse, parseAiSuggestRequest } from "../app/lib/ai.ts";
 
 const nodes = [
   { id: 1, parent: null, text: "理想生活", note: "中心", x: 0, y: 0, tone: "ink" },
@@ -73,13 +73,6 @@ test("AI explanation parser validates useful content and removes unknown connect
   assert.equal(result.explanation.connections.length, 1);
   assert.equal(result.explanation.connections[0].nodeId, 1);
   assert.equal(parseAiExplanationResponse({ summary: "不完整", explanation: { definition: "", keyPoints: [], connections: [], question: "" } }, new Set([1])), null);
-});
-
-test("AI response text extractor supports raw Responses API output", () => {
-  const structured = '{"summary":"整理結果","suggestions":[]}';
-  assert.equal(extractAiResponseText({ output_text: structured }), structured);
-  assert.equal(extractAiResponseText({ output: [{ type: "reasoning", content: [] }, { type: "message", content: [{ type: "output_text", text: structured }] }] }), structured);
-  assert.equal(extractAiResponseText({ output: [{ type: "message", content: [{ type: "refusal", refusal: "無法回答" }] }] }), null);
 });
 
 test("AI history is restored per node and malformed records are ignored", () => {
