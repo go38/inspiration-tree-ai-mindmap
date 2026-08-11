@@ -48,9 +48,12 @@ test("server-renders the mind map studio", async () => {
 
   // Core tools expose accessible names.
   assert.match(html, /在目前節點下新增節點/);
-  assert.match(html, /移除目前節點/);
+  // Remove/duplicate/import moved into the "更多工具" menu in v0.28.1, which is
+  // only rendered once opened, so the rail exposes its entry point instead.
+  assert.match(html, /開啟更多工具/);
   assert.match(html, /搜尋節點/);
-  assert.match(html, /切換至大綱模式/);
+  // v0.29.0 cycles 心智圖 → 樹狀 → 大綱, so the initial label names 樹狀 as next.
+  assert.match(html, /切換至樹狀模式/);
   assert.match(html, /智慧整理/);
   assert.match(html, /智慧整理打造理想生活分支/);
   assert.match(html, /移植身心健康分支/);
