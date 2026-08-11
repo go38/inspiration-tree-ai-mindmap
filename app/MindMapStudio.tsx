@@ -332,13 +332,19 @@ export default function MindMapStudio({
     stageOffsetRef.current = stageOffset;
     stagePanRef.current = stagePan;
   }, [stageOffset, stagePan, zoom]);
+  // Preferences live in localStorage, which the server cannot read, so they can
+  // only be applied after mount — a useState initializer here would render
+  // different markup on the server and client and break hydration. React
+  // batches these into a single re-render.
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     const saved = loadPreferences();
     setPreferences(saved);
     setPreferencesDraft(saved);
     setViewMode(saved.defaultView);
     setMobileAiOpen(saved.aiPanelOpen);
     setZoom(saved.zoom);
+    /* eslint-enable react-hooks/set-state-in-effect */
     zoomRef.current = saved.zoom;
   }, []);
   useEffect(() => {
