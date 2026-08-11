@@ -66,6 +66,21 @@ dashboard → Workers → 你的 Worker → Settings → Variables 新增
 echo -n "gpt-4o-mini" | wrangler secret put OPENAI_MODEL --name "$CF_WORKER_NAME"
 ```
 
+## AI 用量上限（重要）
+
+AI 路由花的是你自己的金鑰，而網址是公開的，因此三條 AI 路由都有速率限制，計數存在 D1 的
+`rate_limits` 資料表。**部署前務必先套用 migration**（`npm run cf:d1:migrate`）：計數寫不進去
+時路由會一律回 503 拒絕請求，這是刻意的 fail-closed 行為——計數器壞掉就等於沒有上限。
+
+預設每個用戶端 IP 每分鐘 10 次、每小時 60 次、每天 200 次，另有整個 Worker 每天 1000 次的
+共用上限（唯一擋得住輪換 IP 的規則）。要調整就設下列 vars，設為 `0` 代表關閉該視窗：
+
+```bash
+wrangler deploy 後於 dashboard → Settings → Variables 設定，或：
+echo -n "30" | wrangler secret put AI_RATE_LIMIT_PER_MINUTE --name "$CF_WORKER_NAME"
+# 其餘：AI_RATE_LIMIT_PER_HOUR、AI_RATE_LIMIT_PER_DAY、AI_RATE_LIMIT_SHARED_PER_DAY
+```
+
 ## 驗證
 
 1. 打開 `https://<CF_WORKER_NAME>.<子網域>.workers.dev`，應看到心智圖工作室。

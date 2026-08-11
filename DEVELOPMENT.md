@@ -7,7 +7,7 @@
 - 開發紀錄建立日期：2026-07-14
 - 產品目標：讓使用者自由整理想法，並透過 AI 自動擴寫與概念解讀持續推進、理解思路。
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：v0.29.0
+- 目前產品版本：v0.30.0
 - 存取狀態：公開 Beta
 
 ## 文件分工
@@ -695,6 +695,36 @@
 - `package.json` 與 `package-lock.json` 的根套件版本同步為 `0.29.0`，並在版本規範中明定 `VERSION` 為產品版本主要來源。
 - 本次只有文件與套件中繼資料校正，不提升產品版本。
 
+## 2026-08-12｜v0.30.0 AI 速率限制與 P2-02 分享到期／撤銷
+
+### AI 速率限制（三個 AI 路由）
+
+- 問題：網站是公開網址，`/api/suggest`、`/api/generate-map`、`/api/knowledge-import` 三條路由都用部署者的 API 金鑰付費，而且沒有任何用量上限。金鑰真正接上之後，這個洞從理論變成實際的帳單風險；知識匯入還額外提供了任何人都能用的匿名網頁抓取能力。
+- 作法：`app/lib/rateLimit.ts` 是純政策（規則、bucket key、超限判定、retry-after），`app/lib/rateLimitStore.ts` 負責 D1 計數；三條路由在讀取 body 之前先呼叫 `enforceAiRateLimit()`，格式錯誤的請求同樣佔用額度，避免被當成免費探測面。
+- 計數方式：固定視窗，每個視窗一次 upsert 並回傳新計數（`case when window_start = excluded.window_start then count + 1 else 1 end`），所有視窗合併成一次 `db.batch()`，因此一次檢查只有一趟 D1 往返，也沒有 read-then-write 的競態。
+- 身分：優先採用 Cloudflare 的 `cf-connecting-ip`，而不是 `oai-authenticated-user-email`。身分 header 由平台注入、伺服器端無法驗證，若以 email 計數，呼叫端每次換一個 email 就能換一份額度。
+- 為什麼要有共用視窗：每個 IP 的三個視窗擋得住單一呼叫端，但擋不住輪換 IP。整個部署每天 1000 次的共用上限是唯一能保證帳單有天花板的規則。全部可用 `AI_RATE_LIMIT_*` 覆寫，設 0 關閉。
+- 失敗策略：計數寫入失敗時回 503 拒絕請求（fail closed）。計數器壞掉等於沒有上限，而沒有上限正是這次要補的洞；代價是 D1 故障時 AI 會一起停用，這是刻意的取捨。
+- 清理：每次請求有 2% 機率刪除 `expires_at` 已過的列，避免 bucket 列無限累積。
+
+### P2-02 分享到期與撤銷
+
+- 資料模型：`share_links` 新增 `expires_at` 與 `revoked_at`（migration `0003_secret_swordsman.sql`，同時建立 `rate_limits`）。
+- 撤銷保留 tombstone 而不刪列：可以讓持有網址的人看到「已撤銷」而不是通用的失效頁，也讓 token 永遠無法復活——PUT 想改回啟用會得到 409，只能 `regenerate` 換新 token。
+- 判定集中在 `shareLinkState()`：撤銷 > 停用 > 到期 > 使用中，無法解析的到期時間視為已到期（fail closed）。`/s/<token>` 與 `/api/maps/:id` 都改成先取列再判定，不再用 `eq(shareLinks.active, true)` 過濾——那樣寫會讓已到期或已撤銷的 token 直接通過。
+- 到期範圍：最短 5 分鐘（否則收件人還沒開就失效），最長 365 天（再長與「不到期」沒有實質差別）。介面提供 24 小時／7 天／30 天／不設到期，並在既有到期時間存在時提供「維持目前設定」。
+- 重新儲存已過期的連結時，用戶端不會把過期的時間原樣送回（`keepShareExpiry()`），否則伺服器驗證會擋下這次儲存。
+
+### 驗證
+
+- `npm run lint` 0 error 0 warning；`npm test` 88 項通過（新增 6 項速率限制、3 項到期／撤銷／狀態的純函式測試，以及原始碼防退化斷言）。
+- 以本機 D1（`npm run db:migrate:local` + `npm run dev`）實測：同一 IP 第 11 次 `/api/suggest` 回 429 並帶 `retry-after`，換 IP 不受影響，視窗滾動後恢復；`rate_limits` 同時出現 1m／1h／1d 與共用四個 bucket，三條 AI 路由各自獨立計數。
+- 分享流程實測：建立地圖 → 設定 24 小時到期（200）→ 過去時間與兩年後皆被拒（400）→ 以 token 讀取 200 → 撤銷後分享頁顯示「分享連結已撤銷」、API 讀寫皆 404、PUT 回 409 → `regenerate` 產生新 token 後舊網址失效。手動把 `expires_at` 改到過去，分享頁顯示「分享連結已到期」，API 讀取與寫入皆 404。
+- 產品版本提升為 v0.30.0（新增向下相容功能），與先前未發布的 Anthropic Messages API 改版一併發布。
+- 部署順序：先對遠端 D1 `mindmap` 套用 `0003_secret_swordsman.sql`，再 `npm run cf:deploy`。順序不能顛倒——速率限制 fail closed，資料表不存在時三條 AI 路由會全部回 503。
+- 已發佈至 https://mindmap.go38.workers.dev （Worker `mindmap`，版本 `7f4868fd-4652-4bd0-8374-eb035b8443ef`）。正式環境實測：`/api/suggest` 第 11 次起回 429 並帶 `retry-after`；視窗滾動後真實 AI 擴寫回傳 5 筆建議；分享到期／撤銷全流程行為與本機一致（撤銷後分享頁「已撤銷」、API 404、PUT 409、regenerate 後恢復）。
+- Sites 平台（inspiration-tree-ai-mindmap.go38.chatgpt.site）不在此 CLI 的發佈範圍，需另行於平台發佈；發佈後把平台版次補進本節。
+
 ## 目前已知限制
 
 - 尚未支援多人共同即時編輯。
@@ -705,10 +735,13 @@
 - 樹狀手動偏移目前只保留於當次編輯工作階段；重新整理頁面會回到自動樹冠，不會同步到雲端。
 - 靈感收件匣目前採每張地圖的裝置端保存，尚未跨裝置同步；將種子種下後的正式節點仍依原有地圖保存方式同步。
 - 共享地圖為儲存後同步，尚非多人即時協作。
+- AI 速率限制採固定視窗，視窗交界處最多可通過接近兩倍的請求；以控管費用的目的而言可以接受，若要更精確需改為滑動視窗。
+- 速率限制以用戶端 IP 計數，同一個 NAT 或公司網路後方的多位使用者會共用額度。
+- 分享連結到期後不會自動清除資料列，只會在讀取時判定為失效。
 
 ## 建議後續工作
 
-1. 以已完成的 P2-01 權限模型為基礎，開發 P2-02 分享到期／撤銷，再承接 P2-03 節點留言與討論。
+1. P2-01／P2-02 已完成，接著開發 P2-03 節點留言與討論，再承接 P2-04 版本歷史。
 2. 在實體觸控裝置與螢幕閱讀器上完成 P0-14 的人工驗收，並補上手機大綱缺少的節點操作。
 3. 規劃 P2-08 公開範本庫，沿用 P1-07 的範本資料契約。
 

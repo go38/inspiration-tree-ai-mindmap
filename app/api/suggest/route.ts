@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { buildAiInput, parseAiExplanationResponse, parseAiResponse, parseAiSuggestRequest } from "../../lib/ai";
 import { readAiConfig, requestClaudeJson } from "../../lib/aiProvider";
+import { enforceAiRateLimit } from "../../lib/rateLimitStore";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,11 @@ const EXPLANATION_RESPONSE_SCHEMA = {
 } as const;
 
 export async function POST(request: Request) {
+  // Metered before anything else: a malformed body still costs a request slot,
+  // which is what keeps a scripted caller from probing the route for free.
+  const limited = await enforceAiRateLimit(request, "suggest");
+  if (limited) return limited;
+
   const body = await request.json().catch(() => null);
   const parsed = parseAiSuggestRequest(body);
   if (!parsed) return Response.json({ error: "AI 請求格式不正確，請重新選取節點後再試。" }, { status: 400 });

@@ -85,7 +85,13 @@ import {
 } from "./lib/aiMap";
 import { type KnowledgeSourceType } from "./lib/knowledgeImport";
 import {
+  describeShareExpiry,
+  keepShareExpiry,
+  shareExpiryFromPreset,
+  shareLinkStateLabel,
   sharePermissionLabel,
+  SHARE_EXPIRY_PRESETS,
+  type ShareExpiryPresetId,
   type ShareLinkSummary,
   type SharePermission,
 } from "./lib/shareAccess";
@@ -237,6 +243,13 @@ export default function MindMapStudio({
   const [shareLink, setShareLink] = useState<ShareLinkSummary | null>(null);
   const [sharePermission, setSharePermission] = useState<SharePermission>("view");
   const [shareActive, setShareActive] = useState(false);
+  // The saved deadline is kept separately from the preset picker: reopening the
+  // dialog must show the real expiry, not whichever preset produced it.
+  const [shareExpiryPreset, setShareExpiryPreset] = useState<ShareExpiryPresetId | "keep">("never");
+  const [shareCheckedAt, setShareCheckedAt] = useState(0);
+  // A revoked token can never be edited back into service, so the dialog locks
+  // every control except "重新產生連結".
+  const shareRevoked = shareLink?.state === "revoked";
   const [shareLoading, setShareLoading] = useState(false);
   const [shareError, setShareError] = useState("");
   const [documentTitle, setDocumentTitle] = useState(persistence.mode === "cloud" ? persistence.title : "我的理想生活");
@@ -749,9 +762,7 @@ export default function MindMapStudio({
         setShareError(data.error || "無法讀取分享設定");
         return;
       }
-      setShareLink(data.share ?? null);
-      setSharePermission(data.share?.permission ?? "view");
-      setShareActive(data.share?.active ?? false);
+      applyShareLink(data.share ?? null);
     } catch {
       setShareError("網路連線失敗，請稍後再試。");
     } finally {
@@ -759,27 +770,63 @@ export default function MindMapStudio({
     }
   }
 
+  function applyShareLink(share: ShareLinkSummary | null) {
+    setShareLink(share);
+    // Countdown labels read from this snapshot instead of the live clock, so a
+    // re-render never changes what the dialog says.
+    setShareCheckedAt(new Date().getTime());
+    setSharePermission(share?.permission ?? "view");
+    setShareActive(share?.active ?? false);
+    // "keep" means "leave the stored deadline alone"; it only makes sense when
+    // there is one to keep.
+    setShareExpiryPreset(share?.expiresAt ? "keep" : "never");
+  }
+
   async function updateShareAccess(regenerate = false) {
     if (persistence.mode !== "cloud" || !isOwner || shareLoading) return;
     setShareLoading(true);
     setShareError("");
     try {
+      const expiresAt = shareExpiryPreset === "keep"
+        ? keepShareExpiry(shareLink?.expiresAt ?? null)
+        : shareExpiryFromPreset(shareExpiryPreset);
       const response = await fetch(`/api/maps/${persistence.mapId}/share`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ active: shareActive, permission: sharePermission, regenerate }),
+        body: JSON.stringify({ active: shareActive, permission: sharePermission, regenerate, expiresAt }),
       });
       const data = await response.json() as { share?: ShareLinkSummary; error?: string };
       if (!response.ok || !data.share) {
         setShareError(data.error || "無法更新分享設定");
         return;
       }
-      setShareLink(data.share);
-      setShareActive(data.share.active);
-      setSharePermission(data.share.permission);
-      flashToast(data.share.active ? `分享已開啟：${sharePermissionLabel(data.share.permission)}` : "分享已關閉");
+      applyShareLink(data.share);
+      flashToast(data.share.state === "active"
+        ? `分享已開啟：${sharePermissionLabel(data.share.permission)}`
+        : `分享${shareLinkStateLabel(data.share.state)}`);
     } catch {
       setShareError("網路連線失敗，分享設定未變更。");
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
+  async function revokeShareAccess() {
+    if (persistence.mode !== "cloud" || !isOwner || shareLoading || !shareLink) return;
+    if (!window.confirm("撤銷後這個網址會永久失效，且無法復原。要繼續嗎？")) return;
+    setShareLoading(true);
+    setShareError("");
+    try {
+      const response = await fetch(`/api/maps/${persistence.mapId}/share`, { method: "DELETE" });
+      const data = await response.json() as { share?: ShareLinkSummary; error?: string };
+      if (!response.ok || !data.share) {
+        setShareError(data.error || "無法撤銷分享連結");
+        return;
+      }
+      applyShareLink(data.share);
+      flashToast("分享連結已撤銷");
+    } catch {
+      setShareError("網路連線失敗，連結未撤銷。");
     } finally {
       setShareLoading(false);
     }
@@ -2523,11 +2570,15 @@ export default function MindMapStudio({
             <div><span className="modal-kicker">CONTROLLED SHARING</span><h2 id="share-access-title">分享權限</h2><p>預設不公開；只有持有啟用連結的人能依指定角色存取。</p></div>
             <button type="button" onClick={() => setUtilityModal(null)} aria-label="關閉分享設定" disabled={shareLoading}>×</button>
           </header>
+          {shareLink && <div className={`share-state-row ${shareLink.state}`} role="status">
+            <strong>連結狀態：{shareLinkStateLabel(shareLink.state)}</strong>
+            <span>{shareLink.state === "revoked" ? "已永久失效，只能重新產生新連結" : describeShareExpiry(shareLink.expiresAt, shareCheckedAt)}</span>
+          </div>}
           <label className="share-toggle">
             <span><strong>啟用分享連結</strong><small>{shareActive ? "連結目前可以使用" : "其他人目前無法透過連結存取"}</small></span>
-            <input type="checkbox" checked={shareActive} onChange={(event) => setShareActive(event.target.checked)} disabled={shareLoading} />
+            <input type="checkbox" checked={shareActive} onChange={(event) => setShareActive(event.target.checked)} disabled={shareLoading || shareRevoked} />
           </label>
-          <fieldset className="share-role-options" disabled={shareLoading || !shareActive}>
+          <fieldset className="share-role-options" disabled={shareLoading || shareRevoked || !shareActive}>
             <legend>訪客權限</legend>
             {([
               ["view", "唯讀", "可瀏覽、搜尋與匯出，不可修改"],
@@ -2535,16 +2586,29 @@ export default function MindMapStudio({
               ["edit", "可編輯", "可修改節點與標題，變更同步儲存"],
             ] as [SharePermission, string, string][]).map(([permission, label, detail]) => <label key={permission} className={sharePermission === permission ? "selected" : ""}><input type="radio" name="share-permission" checked={sharePermission === permission} onChange={() => setSharePermission(permission)} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}
           </fieldset>
-          {shareLink && <div className={`share-link-box ${shareLink.active ? "active" : ""}`}>
+          <label className="share-expiry">
+            <span><strong>自動到期</strong><small>時間一到，連結不需人工關閉就會失效</small></span>
+            <select
+              value={shareExpiryPreset}
+              onChange={(event) => setShareExpiryPreset(event.target.value as ShareExpiryPresetId | "keep")}
+              disabled={shareLoading || shareRevoked || !shareActive}
+              aria-label="分享連結到期時間"
+            >
+              {shareLink?.expiresAt && <option value="keep">維持目前設定（{describeShareExpiry(shareLink.expiresAt, shareCheckedAt)}）</option>}
+              {SHARE_EXPIRY_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+            </select>
+          </label>
+          {shareLink && <div className={`share-link-box ${shareLink.state === "active" ? "active" : ""}`}>
             <label htmlFor="share-link-value">分享網址</label>
-            <div><input id="share-link-value" readOnly value={`${location.origin}${shareLink.url}`} /><button type="button" onClick={() => { void navigator.clipboard?.writeText(`${location.origin}${shareLink.url}`); flashToast("共享連結已複製"); }} disabled={!shareLink.active}>複製</button></div>
+            <div><input id="share-link-value" readOnly value={`${location.origin}${shareLink.url}`} /><button type="button" onClick={() => { void navigator.clipboard?.writeText(`${location.origin}${shareLink.url}`); flashToast("共享連結已複製"); }} disabled={shareLink.state !== "active"}>複製</button></div>
           </div>}
           {shareError && <div className="ai-map-error" role="alert">{shareError}</div>}
-          <div className="share-security-note"><span aria-hidden="true">◆</span><p><strong>權限由伺服器強制執行</strong>關閉分享後，既有網址會立即失效。重新產生連結則會永久淘汰舊網址。</p></div>
+          <div className="share-security-note"><span aria-hidden="true">◆</span><p><strong>權限由伺服器強制執行</strong>關閉分享或到期後，既有網址會立即失效；重新產生連結會永久淘汰舊網址。撤銷則是永久停用，無法復原。</p></div>
           <footer>
+            {shareLink && !shareRevoked && <button type="button" className="danger" onClick={() => void revokeShareAccess()} disabled={shareLoading}>撤銷連結</button>}
             {shareLink && <button type="button" onClick={() => void updateShareAccess(true)} disabled={shareLoading}>重新產生連結</button>}
             <button type="button" onClick={() => setUtilityModal(null)} disabled={shareLoading}>取消</button>
-            <button type="button" className="primary" onClick={() => void updateShareAccess()} disabled={shareLoading}>{shareLoading ? "儲存中…" : "儲存分享設定"}</button>
+            <button type="button" className="primary" onClick={() => void updateShareAccess()} disabled={shareLoading || shareRevoked}>{shareLoading ? "儲存中…" : "儲存分享設定"}</button>
           </footer>
         </section>
       </div>}

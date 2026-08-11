@@ -8,7 +8,7 @@ import {
   serializeMapData,
 } from "../../../lib/sharedMap";
 import { canAccessMap, normalizeOwnerEmail } from "../../../lib/workspace";
-import { isShareToken, sharePermissionCanEdit } from "../../../lib/shareAccess";
+import { isShareLinkUsable, isShareToken, sharePermissionCanEdit } from "../../../lib/shareAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -39,14 +39,17 @@ function toMapResponse(row: MapRow) {
   };
 }
 
+// Expiry and revocation are evaluated in code rather than in the WHERE clause
+// so every caller shares one definition of "usable" with the share page.
 async function activeShare(id: string, token: string | null) {
   if (!isShareToken(token)) return null;
   const [link] = await getDb()
     .select()
     .from(shareLinks)
-    .where(and(eq(shareLinks.mapId, id), eq(shareLinks.token, token), eq(shareLinks.active, true)))
+    .where(and(eq(shareLinks.mapId, id), eq(shareLinks.token, token)))
     .limit(1);
-  return link ?? null;
+  if (!link || !isShareLinkUsable(link, Date.now())) return null;
+  return link;
 }
 
 // GET /api/maps/:id — load a shared map.

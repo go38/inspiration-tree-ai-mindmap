@@ -3,7 +3,7 @@
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
 - 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
-- 目前產品版本：`v0.29.0`
+- 目前產品版本：`v0.30.0`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
 - 開發路線圖：[ROADMAP.md](./ROADMAP.md)
@@ -48,6 +48,13 @@ This starter does not use `wrangler.jsonc`.
 > `db/schema.ts`、`drizzle/`、`drizzle.config.ts` 與 D1 綁定已用於無登入共享地圖及身份隔離的個人地圖；
 > `examples/d1/`、`worker/index.ts` 與 R2 scaffolding 則保留供後續資料能力使用。
 > 詳見 [ROADMAP.md](./ROADMAP.md) 批次 2。
+
+## v0.30.0 重點
+
+- 分享連結可設定 24 小時、7 天或 30 天自動到期，也可永久撤銷；撤銷後只能重新產生新網址。
+- 失效的分享連結會說明原因（已關閉／已到期／已撤銷），分享設定面板會顯示目前狀態與剩餘時間。
+- 三個 AI 路由加上速率限制，避免公開網址上的無限次呼叫消耗部署者的 API 金鑰。
+- AI 改用 Anthropic Messages API，預設經 Zeabur AI Hub 呼叫 `claude-haiku-4-5`。
 
 ## v0.29.0 重點
 

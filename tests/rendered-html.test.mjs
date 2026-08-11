@@ -81,7 +81,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute, createMapRoute, aiProvider, generateMapRoute, knowledgeImportRoute] = await Promise.all([
+  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute, createMapRoute, aiProvider, generateMapRoute, knowledgeImportRoute, rateLimitStore] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -101,6 +101,7 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/lib/aiProvider.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/generate-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/knowledge-import/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/rateLimitStore.ts", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin server wrapper around the shared studio: it reads
@@ -287,10 +288,35 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(studio, /可編輯/);
   assert.match(shareRoute, /eq\(mindMaps\.ownerEmail, ownerEmail\)/);
   assert.match(shareRoute, /regenerate/);
-  assert.match(sharedAccessPage, /eq\(shareLinks\.active, true\)/);
   assert.match(mapRoute, /sharePermissionCanEdit/);
   assert.match(mapRoute, /status: 403/);
   assert.match(schema, /share_links/);
+
+  // P2-02: expiry and revocation are decided by shareLinkState(), never by an
+  // `active` flag alone — a WHERE clause on `active` would let an expired or
+  // revoked token straight through.
+  assert.match(schema, /expiresAt:\s*text\("expires_at"\)/);
+  assert.match(schema, /revokedAt:\s*text\("revoked_at"\)/);
+  assert.match(sharedAccessPage, /shareLinkState\(result\.link\)/);
+  assert.doesNotMatch(sharedAccessPage, /eq\(shareLinks\.active, true\)/);
+  assert.match(mapRoute, /isShareLinkUsable\(link, Date\.now\(\)\)/);
+  assert.doesNotMatch(mapRoute, /eq\(shareLinks\.active, true\)/);
+  assert.match(shareRoute, /export async function DELETE/);
+  assert.match(shareRoute, /revokedAt: timestamp/);
+  // Revocation is permanent: a PUT may never clear it without a new token.
+  assert.match(shareRoute, /existing\?\.revokedAt && !parsed\.value\.regenerate/);
+  assert.match(studio, /revokeShareAccess/);
+  assert.match(studio, /自動到期/);
+
+  // Every AI route is metered before it can spend the API key, and the counter
+  // fails closed so a broken limiter cannot silently reopen the hole.
+  for (const route of [suggestRoute, generateMapRoute, knowledgeImportRoute]) {
+    assert.match(route, /const limited = await enforceAiRateLimit\(request, "[a-z-]+"\);\n  if \(limited\) return limited;/);
+  }
+  assert.match(rateLimitStore, /status: 503/);
+  assert.match(rateLimitStore, /status: 429/);
+  assert.match(rateLimitStore, /"retry-after": String\(retryAfter\)/);
+  assert.match(schema, /rate_limits/);
 
   // Creating a cloud map must stay possible without an identity header, so the
   // app still works on hosts that do not inject one. Ownership is applied when

@@ -2,10 +2,16 @@ import { env } from "cloudflare:workers";
 import { AI_MAP_RESPONSE_SCHEMA, parseAiMapDraft } from "../../lib/aiMap";
 import { readAiConfig, requestClaudeJson } from "../../lib/aiProvider";
 import { extractWebsiteText, parseKnowledgeImportRequest } from "../../lib/knowledgeImport";
+import { enforceAiRateLimit } from "../../lib/rateLimitStore";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  // Also guards the outbound fetch below: without a limit this route doubles as
+  // an anonymous website fetcher.
+  const limited = await enforceAiRateLimit(request, "knowledge-import");
+  if (limited) return limited;
+
   const parsed = parseKnowledgeImportRequest(await request.json().catch(() => null));
   if (!parsed) return Response.json({ error: "知識來源格式不正確；請確認網址、PDF 或逐字稿內容。" }, { status: 400 });
   const workerEnv = env as unknown as Record<string, string | undefined>;

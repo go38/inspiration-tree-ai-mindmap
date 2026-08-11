@@ -573,6 +573,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .share-link-box > div { display:grid; grid-template-columns:1fr auto; gap:7px; }
 .share-link-box input { min-width:0; height:42px; padding:0 10px; border:1px solid var(--line); border-radius:9px; background:#faf7f0; color:#665f55; font-size:9px; }
 .share-link-box button { min-width:62px; border:0; border-radius:9px; background:var(--ink); color:white; font-size:9px; font-weight:750; cursor:pointer; }
+.share-state-row { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:8px; margin:20px 24px 0; padding:10px 12px; border:1px solid var(--line); border-left:3px solid #b9b2a5; border-radius:10px; background:white; }
+.share-state-row strong { font-size:10px; }.share-state-row span { color:var(--muted); font-size:8.5px; }
+.share-state-row.active { border-left-color:var(--sage); background:#f0f6ed; }
+.share-state-row.expired,.share-state-row.revoked { border-left-color:var(--coral); background:#fbe9e4; }
+.share-expiry { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:17px 24px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:white; }
+.share-expiry > span { display:grid; gap:3px; }.share-expiry strong { font-size:11px; }.share-expiry small { color:var(--muted); font-size:8px; }
+.share-expiry select { min-width:170px; height:36px; padding:0 8px; border:1px solid var(--line); border-radius:9px; background:#faf7f0; font-size:9px; }
+.share-expiry select:disabled { opacity:.46; }
+.share-access-modal > footer button.danger { margin-right:auto; border-color:#d8a99d; color:#7a2f21; }
 .share-security-note { display:flex; gap:9px; margin:17px 24px 0; padding:11px 12px; border-radius:10px; background:#f3efe7; color:#625d54; }
 .share-security-note > span { color:var(--sage); }.share-security-note p { margin:0; font-size:8px; line-height:1.5; }.share-security-note strong { display:block; color:var(--ink); font-size:9px; }
 .share-access-modal > footer { padding:18px 24px 22px; }

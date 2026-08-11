@@ -1,10 +1,14 @@
 import { env } from "cloudflare:workers";
 import { AI_MAP_DETAIL_OPTIONS, AI_MAP_RESPONSE_SCHEMA, buildAiMapInput, parseAiMapDraft, parseAiMapRequest } from "../../lib/aiMap";
 import { readAiConfig, requestClaudeJson } from "../../lib/aiProvider";
+import { enforceAiRateLimit } from "../../lib/rateLimitStore";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const limited = await enforceAiRateLimit(request, "generate-map");
+  if (limited) return limited;
+
   const parsed = parseAiMapRequest(await request.json().catch(() => null));
   if (!parsed) return Response.json({ error: "請輸入至少三個字的主題，並選擇詳細程度。" }, { status: 400 });
   const workerEnv = env as unknown as Record<string, string | undefined>;
