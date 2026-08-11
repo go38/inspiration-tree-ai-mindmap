@@ -75,7 +75,7 @@ export async function POST(request: Request) {
       const message = result.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : result.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 暫時無法整理此來源，請稍後重試。";
       return Response.json({ error: message }, { status });
     }
-    const draft = parseAiMapDraft(JSON.parse(result.text), 30);
+    const draft = parseAiMapDraft(result.data, 30);
     if (!draft) return Response.json({ error: "AI 整理出的階層不完整，請縮小來源範圍後重試。" }, { status: 502 });
     return Response.json({ draft, source: { type: parsed.sourceType, label: sourceLabel } });
   } catch (error) {

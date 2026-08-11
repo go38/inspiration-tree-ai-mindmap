@@ -29,7 +29,7 @@ export async function POST(request: Request) {
       const message = result.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : result.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 服務暫時無法回應，請稍後重試。";
       return Response.json({ error: message }, { status });
     }
-    const draft = parseAiMapDraft(JSON.parse(result.text), AI_MAP_DETAIL_OPTIONS[parsed.detail].maximumNodes);
+    const draft = parseAiMapDraft(result.data, AI_MAP_DETAIL_OPTIONS[parsed.detail].maximumNodes);
     if (!draft) return Response.json({ error: "AI 產圖結構不完整，請換個描述再試一次。" }, { status: 502 });
     return Response.json({ draft });
   } catch (error) {

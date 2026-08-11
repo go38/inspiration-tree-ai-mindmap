@@ -3,6 +3,14 @@
 // The base URL is configurable so the same code runs against api.anthropic.com
 // or an Anthropic-compatible gateway. Defaults target Zeabur AI Hub, which is
 // what this deployment uses.
+//
+// JSON comes back through a forced tool call rather than output_config.format.
+// Zeabur proxies Claude via Vertex AI, whose organization policy blocks the
+// structured_outputs feature: output_config is dropped without an error (the
+// model just answers in prose) and strict tool use is rejected outright with
+// `constraints/vertexai.allowedPartnerModelFeatures`. A non-strict tool with a
+// forced tool_choice is unaffected, returns an already-parsed object, and still
+// lets the schema's own bounds guide the model.
 
 const DEFAULT_BASE_URL = "https://hnd1.aihub.zeabur.ai";
 const DEFAULT_MODEL = "claude-haiku-4-5";
@@ -27,38 +35,19 @@ export function readAiConfig(
   };
 }
 
-/**
- * Anthropic structured outputs reject the length and range keywords OpenAI's
- * strict mode accepted, so they are stripped before the schema is sent. Every
- * bound they expressed is re-checked when the response is parsed — see
- * parseAiResponse, parseAiExplanationResponse and parseAiMapDraft — except the
- * minimum suggestion count, which is only requested in the prompt.
- */
-const UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
-  "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum", "multipleOf",
-]);
-
-export function toAnthropicSchema(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(toAnthropicSchema);
-  if (!schema || typeof schema !== "object") return schema;
-  return Object.fromEntries(
-    Object.entries(schema as Record<string, unknown>)
-      .filter(([key]) => !UNSUPPORTED_SCHEMA_KEYWORDS.has(key))
-      .map(([key, value]) => [key, toAnthropicSchema(value)]),
-  );
-}
-
-/** The text of the first text block. Anything else (refusal, tool use) yields null. */
-export function extractClaudeText(value: unknown): string | null {
+/** The input of the forced tool call. Prose or a refusal yields null. */
+export function extractClaudeToolInput(value: unknown, toolName: string): unknown {
   if (!value || typeof value !== "object") return null;
   const content = (value as Record<string, unknown>).content;
   if (!Array.isArray(content)) return null;
-  const text = content.flatMap((block) => {
-    if (!block || typeof block !== "object") return [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
     const part = block as Record<string, unknown>;
-    return part.type === "text" && typeof part.text === "string" && part.text.trim() ? [part.text.trim()] : [];
-  }).join("\n");
-  return text || null;
+    if (part.type === "tool_use" && part.name === toolName && part.input && typeof part.input === "object") {
+      return part.input;
+    }
+  }
+  return null;
 }
 
 export type ClaudeRequest = {
@@ -72,13 +61,13 @@ export type ClaudeRequest = {
 };
 
 export type ClaudeResult =
-  | { ok: true; text: string }
+  | { ok: true; data: unknown }
   | { ok: false; status: number };
 
 /**
- * Sends one structured-output request. `status` on failure is the upstream HTTP
- * status, or 502 when the reply arrived but carried no usable JSON — callers
- * map it to their own wording.
+ * Sends one request and returns the tool call's arguments. `status` on failure
+ * is the upstream HTTP status, or 502 when the reply arrived without a usable
+ * tool call — callers map it to their own wording.
  */
 export async function requestClaudeJson(request: ClaudeRequest): Promise<ClaudeResult> {
   const response = await fetch(`${request.config.baseUrl}/v1/messages`, {
@@ -90,25 +79,25 @@ export async function requestClaudeJson(request: ClaudeRequest): Promise<ClaudeR
     },
     body: JSON.stringify({
       model: request.config.model,
-      // Claude Haiku 4.5 rejects output_config.effort, so only the format is set.
       max_tokens: request.maxTokens,
       system: request.system,
       messages: [{ role: "user", content: request.content }],
-      output_config: {
-        format: {
-          type: "json_schema",
-          name: request.schemaName,
-          schema: toAnthropicSchema(request.schema),
-        },
-      },
+      // No `strict: true` — Vertex rejects it as a structured_outputs feature.
+      tools: [{
+        name: request.schemaName,
+        description: "以指定結構輸出結果。這是唯一的回覆方式，不要改用文字回答。",
+        input_schema: request.schema,
+      }],
+      tool_choice: { type: "tool", name: request.schemaName },
     }),
     signal: request.signal,
   });
   if (!response.ok) return { ok: false, status: response.status };
 
   const body = await response.json() as Record<string, unknown>;
-  // A refusal or a truncated reply both leave the JSON unusable.
+  // A refusal, or a reply truncated before the tool call closed, leaves nothing
+  // usable — `max_tokens` would otherwise surface as a half-built object.
   if (body.stop_reason === "refusal" || body.stop_reason === "max_tokens") return { ok: false, status: 502 };
-  const text = extractClaudeText(body);
-  return text ? { ok: true, text } : { ok: false, status: 502 };
+  const data = extractClaudeToolInput(body, request.schemaName);
+  return data ? { ok: true, data } : { ok: false, status: 502 };
 }

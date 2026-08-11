@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractClaudeText, readAiConfig, toAnthropicSchema } from "../app/lib/aiProvider.ts";
-import { AI_MAP_RESPONSE_SCHEMA } from "../app/lib/aiMap.ts";
+import { extractClaudeToolInput, readAiConfig } from "../app/lib/aiProvider.ts";
 
 test("config prefers AI_* names and falls back to the shipped OPENAI_API_KEY", () => {
   assert.equal(readAiConfig({}, {}), null);
@@ -27,30 +26,22 @@ test("an inherited OpenAI model name is never sent to Claude", () => {
   assert.equal(config.model, "claude-haiku-4-5");
 });
 
-test("schema conversion strips the keywords Anthropic structured outputs reject", () => {
-  const converted = toAnthropicSchema(AI_MAP_RESPONSE_SCHEMA);
-  const serialized = JSON.stringify(converted);
-  for (const keyword of ["minItems", "maxItems", "minLength", "maxLength", "multipleOf"]) {
-    assert.doesNotMatch(serialized, new RegExp(keyword), `${keyword} must not reach the API`);
-  }
-  // Everything load-bearing survives, including nested objects and enums.
-  assert.equal(converted.additionalProperties, false);
-  assert.deepEqual(converted.required, ["title", "summary", "nodes"]);
-  assert.deepEqual(converted.properties.nodes.items.properties.tone.enum, ["ink", "coral", "sage", "sun"]);
-  assert.equal(converted.properties.nodes.items.additionalProperties, false);
-  // The source schema keeps its constraints as documentation.
-  assert.equal(AI_MAP_RESPONSE_SCHEMA.properties.nodes.minItems, 3);
-});
-
-test("response extractor reads Anthropic content blocks and rejects unusable replies", () => {
-  const structured = '{"summary":"整理結果","suggestions":[]}';
-  assert.equal(extractClaudeText({ content: [{ type: "text", text: structured }] }), structured);
-  assert.equal(
-    extractClaudeText({ content: [{ type: "thinking", thinking: "" }, { type: "text", text: structured }] }),
-    structured,
+test("tool input extractor reads the forced call and ignores everything else", () => {
+  const input = { summary: "整理結果", suggestions: [] };
+  assert.deepEqual(
+    extractClaudeToolInput({ content: [{ type: "tool_use", name: "emit", input }] }, "emit"),
+    input,
   );
-  assert.equal(extractClaudeText({ content: [] }), null);
-  assert.equal(extractClaudeText({ content: [{ type: "text", text: "   " }] }), null);
-  // The OpenAI Responses shape must not be silently accepted any more.
-  assert.equal(extractClaudeText({ output_text: structured }), null);
+  // Claude may narrate before calling the tool; the call is what counts.
+  assert.deepEqual(
+    extractClaudeToolInput({ content: [{ type: "text", text: "好的" }, { type: "tool_use", name: "emit", input }] }, "emit"),
+    input,
+  );
+  // A different tool must not be mistaken for ours.
+  assert.equal(extractClaudeToolInput({ content: [{ type: "tool_use", name: "other", input }] }, "emit"), null);
+  // Prose only — the failure this whole approach exists to catch. Zeabur's
+  // Vertex backend answers this way when structured outputs are unavailable.
+  assert.equal(extractClaudeToolInput({ content: [{ type: "text", text: "我是 Claude…" }] }, "emit"), null);
+  assert.equal(extractClaudeToolInput({ content: [] }, "emit"), null);
+  assert.equal(extractClaudeToolInput(null, "emit"), null);
 });

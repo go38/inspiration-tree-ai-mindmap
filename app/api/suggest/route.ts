@@ -90,7 +90,7 @@ export async function POST(request: Request) {
       const message = result.status === 429 ? "AI 使用量暫時已達上限，請稍後重試。" : result.status === 401 ? "AI 服務設定無效，請管理者檢查 API 金鑰。" : "AI 服務暫時無法回應，請稍後重試。";
       return Response.json({ error: message }, { status });
     }
-    const json = JSON.parse(result.text);
+    const json = result.data;
     const allowedNodeIds = new Set(parsed.nodes.map((node) => node.id));
     const validated = explaining
       ? parseAiExplanationResponse(json, allowedNodeIds)
@@ -98,6 +98,8 @@ export async function POST(request: Request) {
     if (!validated) return Response.json({ error: "AI 回覆格式不完整，請再試一次。" }, { status: 502 });
     return Response.json(validated);
   } catch (error) {
+    // Swallowing the cause left every upstream failure looking identical.
+    console.error("[ai/suggest]", error);
     const message = error instanceof DOMException && error.name === "AbortError" ? "AI 回應逾時，請縮小選取範圍後重試。" : "AI 回覆無法解析，請再試一次。";
     return Response.json({ error: message }, { status: 502 });
   } finally {

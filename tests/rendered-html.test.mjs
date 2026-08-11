@@ -261,10 +261,15 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     assert.doesNotMatch(route, /api\.openai\.com/);
     assert.doesNotMatch(route, /max_output_tokens|instructions:|reasoning:/);
   }
-  // Claude Haiku 4.5 rejects output_config.effort; sending the key would 400.
-  // Matches an object key, so the comment explaining the omission still passes.
-  assert.doesNotMatch(aiProvider, /effort\s*:/);
   assert.match(aiProvider, /"anthropic-version"/);
+  // Zeabur proxies Claude via Vertex, whose org policy blocks structured
+  // outputs: output_config is silently dropped and `strict: true` is rejected
+  // outright. JSON must keep coming from a forced, non-strict tool call.
+  // Comments are stripped first so the note explaining each omission — which
+  // necessarily names them — cannot fail its own assertion.
+  const providerCode = aiProvider.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(providerCode, /tool_choice: \{ type: "tool"/);
+  assert.doesNotMatch(providerCode, /output_config|strict\s*:|effort\s*:/);
   assert.match(studio, /onContextMenu=\{\(event\) => openAiContextMenu\(event, node\)\}/);
   assert.match(studio, /data-testid="ai-context-menu"/);
   assert.match(studio, /runAiAssistantCommand\(command\.id\)/);

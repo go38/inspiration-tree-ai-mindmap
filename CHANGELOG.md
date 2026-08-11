@@ -9,10 +9,12 @@
 - AI 改用 Anthropic Messages API，預設經 Zeabur AI Hub 呼叫 `claude-haiku-4-5`。三個 AI 路由（擴寫／解讀、AI 自動產圖、知識匯入）共用 `app/lib/aiProvider.ts`，端點與模型改由 `AI_BASE_URL`／`AI_MODEL` 設定。
 - 環境變數改為 `AI_API_KEY`／`AI_MODEL`／`AI_BASE_URL`；`OPENAI_API_KEY` 仍作為金鑰的後備名稱，`OPENAI_MODEL` 則刻意不再讀取——沿用舊的 OpenAI 模型名稱會讓每一次呼叫都失敗。
 - 知識匯入的 PDF 由 Responses API 的 `input_file` 改為 Anthropic 的 `document` 內容塊，並置於文字之前。
+- JSON 改由「強制工具呼叫」取得，而非 `output_config.format`。Zeabur 經 Vertex AI 代理 Claude，其組織政策封鎖 `structured_outputs`：`output_config` 會被靜默丟棄（模型改以散文回覆），`strict: true` 則直接被 `constraints/vertexai.allowedPartnerModelFeatures` 拒絕。不帶 `strict` 的工具呼叫不受影響，回傳的 `tool_use.input` 已是解析好的物件，schema 自身的上下限也仍能引導模型。
+- AI 路由的 catch 區塊改為記錄真正的例外。先前所有上游失敗都被壓成同一句訊息，是這次排查困難的主因。
 
-### Known limitations
+### Verified
 
-- Anthropic 結構化輸出不支援 `minItems`／`maxItems`，送出前會由 `toAnthropicSchema()` 剝除。這些上限多數在伺服器端已有等效驗證（`parseAiResponse` 的 6 筆上限、`parseAiExplanationResponse` 的 2–4 個重點、`parseAiMapDraft` 的 3–40 個節點），**唯一失去硬保證的是「擴寫建議至少 3 個」**：PRD AI-03 的下限自此僅由提示詞要求，模型少給時不會被擋下。維持既有寬容行為是刻意的——把 2 筆建議變成錯誤畫面比顯示 2 筆更糟。
+- 三個 AI 功能已於正式環境實測通過：擴寫回傳 6 筆建議（schema 要求 3–6）、概念解讀回傳 3 個重點與 1 個關聯、AI 自動產圖回傳 12 個節點。
 
 ### Fixed
 
