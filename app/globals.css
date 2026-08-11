@@ -546,7 +546,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .access-banner.edit strong { background:#f7d9d2; }
 .has-access-banner .workspace { height:calc(100vh - 124px); height:calc(100dvh - 124px); }
 .has-access-banner.has-banner .workspace { height:calc(100vh - 172px); height:calc(100dvh - 172px); }
-.read-only .toolrail { opacity:.42; pointer-events:none; }
+/* Editing tools carry a native disabled state in read-only maps, so the rail
+   itself stays interactive for the view switch and preferences. */
 .read-only .mind-node .node-actions,.read-only .branch-collapse-toggle,.read-only .layout-button,.read-only .outline-actions,.read-only .outline-drag-handle,.read-only .outline-collapse { display:none; }
 .read-only .mind-node { cursor:default; }
 .read-only .mind-node,.read-only .outline-copy { pointer-events:none; }

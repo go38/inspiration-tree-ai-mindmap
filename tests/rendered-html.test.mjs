@@ -252,4 +252,23 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(mapRoute, /sharePermissionCanEdit/);
   assert.match(mapRoute, /status: 403/);
   assert.match(schema, /share_links/);
+
+  // Read-only visitors must be blocked by native disabled state, not by CSS
+  // alone: pointer-events:none still leaves buttons reachable with a keyboard.
+  assert.doesNotMatch(studio, /<nav className="toolrail"[^>]*aria-disabled/);
+  assert.doesNotMatch(globals, /\.read-only \.toolrail\s*\{[^}]*pointer-events:\s*none/);
+  const studioLines = studio.split("\n");
+  for (const label of [
+    "在目前節點下新增節點",
+    "使用 AI 自動產生心智圖",
+    "開啟靈感收件匣",
+  ]) {
+    const line = studioLines.find((text) => text.includes("<button") && text.includes(label));
+    assert.ok(line, `找不到工具列按鈕：${label}`);
+    assert.match(line, /disabled={!canEdit}/, `${label} 在唯讀模式必須停用`);
+  }
+  // Mutating helpers guard themselves, since they are also reachable from node
+  // cards, the inbox and keyboard shortcuts.
+  assert.match(studio, /function addNode\([^)]*\)\s*{\s*\n\s*if \(!canEdit\) return;/);
+  assert.match(studio, /function removeSelectedNode\(\)\s*{\s*\n\s*if \(!canEdit\) return;/);
 });

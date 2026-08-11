@@ -810,6 +810,7 @@ export default function MindMapStudio({
   }
 
   function addNode(parentId = selectedId, title = "新想法", note = "雙擊節點即可編輯") {
+    if (!canEdit) return;
     checkpoint();
     const parent = nodes.find((node) => node.id === parentId) ?? nodes[0];
     const childCount = nodes.filter((node) => node.parent === parent.id).length;
@@ -1140,6 +1141,7 @@ export default function MindMapStudio({
   }
 
   function removeSelectedNode() {
+    if (!canEdit) return;
     const target = nodes.find((node) => node.id === selectedId);
     if (!target || target.parent === null) {
       flashToast("中心節點不能移除");
@@ -2062,23 +2064,25 @@ export default function MindMapStudio({
 
       {!isOwner && <div className={`access-banner ${cloudAccess}`} role="status"><strong>{sharePermissionLabel(cloudAccess as SharePermission)}</strong><span>{cloudAccess === "edit" ? "你可以修改這張地圖，所有變更會同步給其他訪客。" : cloudAccess === "comment" ? "留言功能將於下一階段開放；目前可瀏覽與匯出。" : "你可以瀏覽、搜尋與匯出，但不能修改內容。"}</span></div>}
       <section className="workspace">
-        <nav className="toolrail" aria-label="心智圖工具" aria-disabled={!canEdit}>
+        {/* aria-disabled is ignored on role=navigation, so read-only access is
+            expressed with a native disabled state on each tool instead. */}
+        <nav className="toolrail" aria-label="心智圖工具">
           <div className="toolrail-group">
-            <button className="tool tool-primary" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點">
+            <button className="tool tool-primary" onClick={() => addNode()} aria-label="在目前節點下新增節點" data-tooltip="新增節點" disabled={!canEdit}>
               <span aria-hidden="true">＋</span>
             </button>
-            <button className="tool ai-map-tool" onClick={openAiMapGenerator} aria-label="使用 AI 自動產生心智圖" data-tooltip="AI 自動產圖">
+            <button className="tool ai-map-tool" onClick={openAiMapGenerator} aria-label="使用 AI 自動產生心智圖" data-tooltip="AI 自動產圖" disabled={!canEdit}>
               <span aria-hidden="true">✣</span>
             </button>
-            <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣">
+            <button className={`tool inbox-tool ${inboxOpen ? "active" : ""}`} onClick={openInbox} aria-label={`開啟靈感收件匣，目前有 ${inboxSeeds.length} 顆種子`} data-tooltip="靈感收件匣" disabled={!canEdit}>
               <span aria-hidden="true">⌑</span>
               {inboxSeeds.length > 0 && <small className="inbox-badge">{Math.min(inboxSeeds.length, 99)}</small>}
             </button>
           </div>
           <div className="toolrail-group toolrail-bottom">
             <div className="history-tools" aria-label="編輯紀錄">
-              <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!history.length}><span aria-hidden="true">↶</span></button>
-              <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做 · ⇧⌘Z/Ctrl Y" disabled={!future.length}><span aria-hidden="true">↷</span></button>
+              <button className="tool" onClick={undo} aria-label="復原上一步" data-tooltip="復原 · ⌘/Ctrl Z" disabled={!canEdit || !history.length}><span aria-hidden="true">↶</span></button>
+              <button className="tool" onClick={redo} aria-label="重做上一步" data-tooltip="重做 · ⇧⌘Z/Ctrl Y" disabled={!canEdit || !future.length}><span aria-hidden="true">↷</span></button>
             </div>
             <button className={`tool ${viewMode !== "canvas" ? "active" : ""}`} onClick={cycleViewMode} aria-label={`切換至${nextViewLabel}模式`} data-tooltip={`下一個：${nextViewLabel}`}>
               <span aria-hidden="true">≡</span>
@@ -2094,13 +2098,13 @@ export default function MindMapStudio({
           <div className="tool-menu" role="menu" aria-label="更多工具">
             <header><strong>更多工具</strong><span>整理、匯入與設定</span></header>
             <div className="tool-menu-section">
-              <button role="menuitem" onClick={() => { duplicateSelectedBranch(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>⧉</span><strong>複製分支</strong></button>
-              <button role="menuitem" className="danger" onClick={() => { removeSelectedNode(); setToolMenuOpen(false); }} disabled={selected.parent === null}><span>−</span><strong>移除節點</strong></button>
-              <button role="menuitem" onClick={() => { setUtilityModal("templates"); setToolMenuOpen(false); }}><span>▦</span><strong>分支範本</strong></button>
+              <button role="menuitem" onClick={() => { duplicateSelectedBranch(); setToolMenuOpen(false); }} disabled={!canEdit || selected.parent === null}><span>⧉</span><strong>複製分支</strong></button>
+              <button role="menuitem" className="danger" onClick={() => { removeSelectedNode(); setToolMenuOpen(false); }} disabled={!canEdit || selected.parent === null}><span>−</span><strong>移除節點</strong></button>
+              <button role="menuitem" onClick={() => { setUtilityModal("templates"); setToolMenuOpen(false); }} disabled={!canEdit}><span>▦</span><strong>分支範本</strong></button>
             </div>
             <div className="tool-menu-section">
-              <button role="menuitem" onClick={() => { setImportPreview(null); setUtilityModal("import"); setToolMenuOpen(false); }}><span>⇩</span><strong>匯入內容</strong></button>
-              <button role="menuitem" onClick={() => { openKnowledgeImport(); setToolMenuOpen(false); }}><span>◫</span><strong>知識匯入</strong></button>
+              <button role="menuitem" onClick={() => { setImportPreview(null); setUtilityModal("import"); setToolMenuOpen(false); }} disabled={!canEdit}><span>⇩</span><strong>匯入內容</strong></button>
+              <button role="menuitem" onClick={() => { openKnowledgeImport(); setToolMenuOpen(false); }} disabled={!canEdit}><span>◫</span><strong>知識匯入</strong></button>
               <button role="menuitem" onClick={() => { openPreferences(); setToolMenuOpen(false); }}><span>⚙</span><strong>使用者偏好</strong></button>
               {!isCloud && <button role="menuitem" onClick={() => { resetToSample(); setToolMenuOpen(false); }}><span>⟳</span><strong>重設範例</strong></button>}
             </div>
