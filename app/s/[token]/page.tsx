@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getDb } from "../../../db";
 import { mindMaps, shareLinks } from "../../../db/schema";
 import MindMapStudio from "../../MindMapStudio";
+import { getChatGPTUser } from "../../chatgpt-auth";
 import { isShareToken } from "../../lib/shareAccess";
 import { parseMapData } from "../../lib/sharedMap";
 
@@ -41,10 +42,12 @@ export default async function SharedAccessPage({ params }: { params: Promise<{ t
   const nodes = parseMapData(result.map.data);
   if (!nodes) return <Notice title="心智圖資料毀損" detail="這張地圖的內容目前無法解析。" />;
   const root = nodes.find((node) => node.parent === null) ?? nodes[0];
+  const user = await getChatGPTUser();
   return (
     <MindMapStudio
       initialNodes={nodes}
       initialSelectedId={root.id}
+      showWorkspaceLink={user !== null}
       persistence={{
         mode: "cloud",
         mapId: result.map.id,

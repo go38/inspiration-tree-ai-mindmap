@@ -52,6 +52,7 @@ export default async function SharedMapPage({ params }: { params: Promise<{ id: 
       initialNodes={nodes}
       initialSelectedId={roots[0]?.id ?? nodes[0].id}
       persistence={{ mode: "cloud", mapId: row.id, version: row.version, title: row.title, personal: row.ownerEmail !== null }}
+      showWorkspaceLink={user !== null}
     />
   );
 }

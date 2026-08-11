@@ -4,13 +4,13 @@ import test from "node:test";
 
 // Server-render the built worker and assert the real mind map app ships,
 // not a placeholder skeleton.
-async function render(path = "/") {
+async function render(path = "/", extraHeaders = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html", ...extraHeaders } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -19,6 +19,17 @@ async function render(path = "/") {
 test("production hides the local large-map benchmark route", async () => {
   const response = await render("/performance-benchmark?nodes=500");
   assert.equal(response.status, 404);
+});
+
+test("the workspace link follows the identity header", async () => {
+  // Sites injects this header, so the personal workspace is reachable there and
+  // the link belongs in the chrome. Hosts without it cannot serve /maps at all.
+  const signedIn = await render("/", { "oai-authenticated-user-email": "someone@example.com" });
+  assert.equal(signedIn.status, 200);
+  assert.match(await signedIn.text(), /<a href="\/maps"[^>]*class="workspace-link"[^>]*>我的地圖<\/a>/);
+
+  const anonymous = await render("/");
+  assert.doesNotMatch(await anonymous.text(), /workspace-link/);
 });
 
 test("server-renders the mind map studio", async () => {
@@ -40,7 +51,9 @@ test("server-renders the mind map studio", async () => {
   assert.match(html, /靈感收件匣/);
   assert.match(html, /AI 幫我想/);
   assert.match(html, /要種到哪個分支？/);
-  assert.match(html, /我的地圖/);
+  // This request carries no identity header, so the personal workspace is
+  // unreachable and its link must stay out of the markup.
+  assert.doesNotMatch(html, /我的地圖/);
 
   // Initial mind map content is prerendered (center + a first-level branch).
   assert.match(html, /打造理想生活/);
@@ -87,10 +100,17 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/api/maps/route.ts", import.meta.url), "utf8"),
   ]);
 
-  // The home page is a thin client wrapper around the shared studio.
-  assert.match(page, /^"use client";/);
+  // The home page is a thin server wrapper around the shared studio: it reads
+  // the identity header to decide whether /maps is reachable, and the studio
+  // itself stays the client component that owns every interaction.
   assert.match(page, /<MindMapStudio/);
+  assert.match(page, /showWorkspaceLink={user !== null}/);
+  assert.match(studio, /^"use client";/);
   assert.doesNotMatch(page, /_sites-preview|SkeletonPreview|codex-preview/);
+
+  // The workspace link must never render without an identity, or it points at
+  // a sign-in route that only the Sites platform serves.
+  assert.match(studio, /{showWorkspaceLink && <Link className="workspace-link"/);
 
   // P0-15: search work is deferred, large outline traversals share indexes,
   // and the visual benchmark route can never be exposed in production.

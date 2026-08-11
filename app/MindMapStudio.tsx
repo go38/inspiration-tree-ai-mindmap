@@ -204,10 +204,15 @@ export default function MindMapStudio({
   initialNodes: startNodes,
   initialSelectedId,
   persistence,
+  // The personal workspace needs a signed-in identity. Hosts that do not inject
+  // one cannot serve /maps at all, so the link is opt-in per route rather than
+  // always rendered.
+  showWorkspaceLink = false,
 }: {
   initialNodes: NodeItem[];
   initialSelectedId: number;
   persistence: Persistence;
+  showWorkspaceLink?: boolean;
 }) {
   const isCloud = persistence.mode === "cloud";
   const cloudAccess = persistence.mode === "cloud" ? persistence.access ?? "owner" : "owner";
@@ -2020,7 +2025,7 @@ export default function MindMapStudio({
         <div className="brand"><span className="brand-mark">靈</span><span>靈感樹</span><small>AI MIND STUDIO</small></div>
         <div className="document-title"><span className={`status-dot ${sync}`} />{titleEditing ? <input className="title-input" autoFocus value={titleDraft} maxLength={80} onChange={(event) => setTitleDraft(event.target.value)} onBlur={saveTitleEdit} onKeyDown={(event) => { if (event.key === "Enter") saveTitleEdit(); if (event.key === "Escape") setTitleEditing(false); }} aria-label="心智圖標題" /> : <button className="title-button" onClick={beginTitleEdit} disabled={!canEdit} aria-label={canEdit ? `修改標題：${documentTitle}` : `心智圖標題：${documentTitle}`}>{documentTitle}{canEdit && <span aria-hidden="true">✎</span>}</button>} <span className="saved">{statusLabel}</span></div>
         <div className="top-actions">
-          <Link className="workspace-link" href="/maps">我的地圖</Link>
+          {showWorkspaceLink && <Link className="workspace-link" href="/maps">我的地圖</Link>}
           <div className="export-wrap">
             <button className="export-button" onClick={() => setExportOpen((open) => !open)} aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? "匯出中…" : "匯出"} <span>↓</span></button>
             {exportOpen && <div className="export-menu" role="menu">
