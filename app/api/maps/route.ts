@@ -26,8 +26,11 @@ function generateMapId(): string {
 // POST /api/maps — create a shared map, returns its id.
 export async function POST(request: Request) {
   try {
+    // Identity is optional. Hosts that inject an authenticated email (the Sites
+    // platform) get a map owned by that user; anywhere else the map is created
+    // without an owner, which canAccessMap() treats as reachable by anyone
+    // holding the unguessable id — the pre-workspace sharing model.
     const ownerEmail = normalizeOwnerEmail(request.headers.get("oai-authenticated-user-email"));
-    if (!ownerEmail) return Response.json({ error: "請先登入 ChatGPT 再建立雲端地圖" }, { status: 401 });
     const body = await request.json().catch(() => null);
     const parsed = parseCreatePayload(body);
     if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });

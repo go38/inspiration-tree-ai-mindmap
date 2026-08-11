@@ -68,7 +68,7 @@ test("server-renders the mind map studio", async () => {
 });
 
 test("source keeps the app a client component wired to the shared helpers", async () => {
-  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute] = await Promise.all([
+  const [page, studio, layout, globals, workspacePage, workspaceClient, schema, suggestRoute, inbox, viewState, benchmarkPage, benchmarkScript, shareRoute, sharedAccessPage, mapRoute, createMapRoute] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/MindMapStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -84,6 +84,7 @@ test("source keeps the app a client component wired to the shared helpers", asyn
     readFile(new URL("../app/api/maps/[id]/share/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/s/[token]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/maps/[id]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/maps/route.ts", import.meta.url), "utf8"),
   ]);
 
   // The home page is a thin client wrapper around the shared studio.
@@ -252,6 +253,12 @@ test("source keeps the app a client component wired to the shared helpers", asyn
   assert.match(mapRoute, /sharePermissionCanEdit/);
   assert.match(mapRoute, /status: 403/);
   assert.match(schema, /share_links/);
+
+  // Creating a cloud map must stay possible without an identity header, so the
+  // app still works on hosts that do not inject one. Ownership is applied when
+  // an email is present; it is never a precondition.
+  assert.match(createMapRoute, /normalizeOwnerEmail\(request\.headers\.get\("oai-authenticated-user-email"\)\)/);
+  assert.doesNotMatch(createMapRoute, /if \(!ownerEmail\) return/);
 
   // Read-only visitors must be blocked by native disabled state, not by CSS
   // alone: pointer-events:none still leaves buttons reachable with a keyboard.
