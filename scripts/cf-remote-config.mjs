@@ -2,16 +2,16 @@
 // Cloudflare account (outside the Sites platform). Everything is env-driven so
 // the file can be regenerated and never needs hand editing.
 //
-//   CF_WORKER_NAME        Worker/script name (default: inspiration-tree-ai-mindmap)
-//   CF_D1_DATABASE_NAME   D1 database name   (default: inspiration-tree-ai-mindmap)
+//   CF_WORKER_NAME        Worker/script name (default: mindmap)
+//   CF_D1_DATABASE_NAME   D1 database name   (default: mindmap)
 //   CF_D1_DATABASE_ID     D1 database id     (required — from `wrangler d1 create`)
 //
 // The generated file is git-ignored; it only wires the DB binding + migrations
 // dir so `wrangler d1 migrations apply ... --remote` can find them.
 import { writeFileSync } from "node:fs";
 
-const workerName = process.env.CF_WORKER_NAME || "inspiration-tree-ai-mindmap";
-const databaseName = process.env.CF_D1_DATABASE_NAME || "inspiration-tree-ai-mindmap";
+const workerName = process.env.CF_WORKER_NAME || "mindmap";
+const databaseName = process.env.CF_D1_DATABASE_NAME || "mindmap";
 const databaseId = process.env.CF_D1_DATABASE_ID;
 
 if (!databaseId) {

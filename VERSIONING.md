@@ -27,7 +27,9 @@
 4. 執行 `npm run build` 與 `npm test`。
 5. 合併至 `main`，建立 Git 標籤 `vX.Y.Z`。
 6. 推送 `main` 與標籤至 GitHub。
-7. 發佈 Sites，將 Sites 平台版本寫入開發紀錄。
+7. 先對遠端 D1 套用新的 migration，再執行 `npm run cf:deploy` 發佈到 Cloudflare Workers，並把 Worker 版本 ID 寫入開發紀錄。順序不能顛倒：AI 速率限制在計數資料表不存在時會拒絕所有請求。
+
+> 發佈目標只有 Cloudflare Workers。OpenAI Sites 平台自 v0.30.0 起不再發佈，`inspiration-tree-ai-mindmap.go38.chatgpt.site` 停留在舊版本，不再更新。
 
 ## 4. 版本紀錄原則
 

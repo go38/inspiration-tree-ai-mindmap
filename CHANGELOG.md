@@ -1,6 +1,6 @@
 # 版本紀錄
 
-本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 的分類方式，產品版本採 [Semantic Versioning](https://semver.org/lang/zh-TW/)。Sites 平台版本與產品語意版本分開記錄。
+本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/) 的分類方式，產品版本採 [Semantic Versioning](https://semver.org/lang/zh-TW/)。v0.30.0 以前的紀錄中另有 Sites 平台版次，該平台自 v0.30.0 起不再發佈。
 
 ## [0.30.0] - 2026-08-12
 

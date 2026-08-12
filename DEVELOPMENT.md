@@ -6,7 +6,7 @@
 - 初版完成日期：2026-07-13
 - 開發紀錄建立日期：2026-07-14
 - 產品目標：讓使用者自由整理想法，並透過 AI 自動擴寫與概念解讀持續推進、理解思路。
-- 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
+- 線上版本：https://mindmap.go38.workers.dev （Cloudflare Workers + D1）
 - 目前產品版本：v0.30.0
 - 存取狀態：公開 Beta
 
@@ -723,7 +723,7 @@
 - 產品版本提升為 v0.30.0（新增向下相容功能），與先前未發布的 Anthropic Messages API 改版一併發布。
 - 部署順序：先對遠端 D1 `mindmap` 套用 `0003_secret_swordsman.sql`，再 `npm run cf:deploy`。順序不能顛倒——速率限制 fail closed，資料表不存在時三條 AI 路由會全部回 503。
 - 已發佈至 https://mindmap.go38.workers.dev （Worker `mindmap`，版本 `7f4868fd-4652-4bd0-8374-eb035b8443ef`）。正式環境實測：`/api/suggest` 第 11 次起回 429 並帶 `retry-after`；視窗滾動後真實 AI 擴寫回傳 5 筆建議；分享到期／撤銷全流程行為與本機一致（撤銷後分享頁「已撤銷」、API 404、PUT 409、regenerate 後恢復）。
-- Sites 平台（inspiration-tree-ai-mindmap.go38.chatgpt.site）不在此 CLI 的發佈範圍，需另行於平台發佈；發佈後把平台版次補進本節。
+- 自本版起發佈目標只有 Cloudflare Workers；OpenAI Sites 平台（inspiration-tree-ai-mindmap.go38.chatgpt.site）不再發佈，停留在 v0.29.0 之前的版本。
 
 ## 目前已知限制
 

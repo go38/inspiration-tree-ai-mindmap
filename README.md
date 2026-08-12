@@ -2,7 +2,8 @@
 
 一個可以自由整理、拖曳及延伸想法的互動式心智圖網站，並提供靈感收件匣、AI 腦力激盪、自動擴寫與概念解讀，協助思路持續前進。
 
-- 線上版本：https://inspiration-tree-ai-mindmap.go38.chatgpt.site
+- 線上版本：https://mindmap.go38.workers.dev
+- 部署方式：Cloudflare Workers + D1，見 [DEPLOY-CLOUDFLARE.md](./DEPLOY-CLOUDFLARE.md)
 - 目前產品版本：`v0.30.0`
 - 存取狀態：公開 Beta
 - 產品需求文件：[PRD.md](./PRD.md)
