@@ -18,6 +18,7 @@
     "cf:config": "node scripts/cf-remote-config.mjs",
     "cf:d1:migrate": "npm run cf:config && wrangler d1 migrations apply ${CF_D1_DATABASE_NAME:-mindmap} --remote --config .wrangler-remote.jsonc",
     "cf:secret": "wrangler secret put AI_API_KEY --name ${CF_WORKER_NAME:-mindmap}",
+    "cf:secret:site": "wrangler secret put SITE_PASSWORD --name ${CF_WORKER_NAME:-mindmap}",
     "cf:deploy": "npm run build && wrangler deploy --name ${CF_WORKER_NAME:-mindmap}"
   },
   "dependencies": {

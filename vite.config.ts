@@ -16,12 +16,27 @@ const cfDatabaseId =
   process.env.CF_D1_DATABASE_ID || SITE_CREATOR_PLACEHOLDER_DATABASE_ID;
 const cfDatabaseName = process.env.CF_D1_DATABASE_NAME || "site-creator-d1";
 
+// The production Worker is reached through a custom domain. Declaring the route
+// here also pins `workers_dev`/`preview_urls` off, which needs saying out loud:
+// wrangler turns the workers.dev subdomain back *on* whenever a deploy config
+// carries no routes, and one canonical hostname is what keeps share links and
+// rate-limit counters from being split across two.
+const cfCustomDomain = process.env.CF_CUSTOM_DOMAIN;
+const customDomainConfig = cfCustomDomain
+  ? {
+      workers_dev: false,
+      preview_urls: false,
+      routes: [{ pattern: cfCustomDomain, custom_domain: true }],
+    }
+  : {};
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  ...customDomainConfig,
   d1_databases: d1
     ? [
         {

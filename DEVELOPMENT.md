@@ -6,7 +6,7 @@
 - 初版完成日期：2026-07-13
 - 開發紀錄建立日期：2026-07-14
 - 產品目標：讓使用者自由整理想法，並透過 AI 自動擴寫與概念解讀持續推進、理解思路。
-- 線上版本：https://mindmap.go38.workers.dev （Cloudflare Workers + D1）
+- 線上版本：https://mind.milifun.net （Cloudflare Workers + D1；工作室需要站台密碼，分享頁免登入；舊網址 mindmap.go38.workers.dev 已關閉）
 - 目前產品版本：v0.30.0
 - 存取狀態：公開 Beta
 

@@ -1,10 +1,13 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { checkSiteAccess } from "../app/lib/siteAuth";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  /** Basic-auth password for the whole site. Unset (local dev) leaves the gate off. */
+  SITE_PASSWORD?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -27,6 +30,11 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Before anything else: the point of the gate is that unauthenticated
+    // requests never reach a route that spends the AI key or writes to D1.
+    const locked = checkSiteAccess(request, env.SITE_PASSWORD);
+    if (locked) return locked;
+
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {

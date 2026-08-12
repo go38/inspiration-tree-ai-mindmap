@@ -4,7 +4,7 @@
 > 更新日期：2026-08-12
 > 產品版本：v0.30.0
 > 產品狀態：公開 Beta
-> 正式網址：https://mindmap.go38.workers.dev （Cloudflare Workers；Sites 平台版本自 v0.30.0 起不再更新）
+> 正式網址：https://mind.milifun.net （Cloudflare Workers；工作室需要站台密碼、分享頁免登入，舊網址 mindmap.go38.workers.dev 已關閉，Sites 平台版本自 v0.30.0 起不再更新）
 
 ## 1. 文件目的
 
